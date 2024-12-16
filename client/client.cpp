@@ -11,38 +11,63 @@ using namespace std;
 
 // Mock storage for chunks
 // map<string, string> chunkStorage; // chunk_sha -> file path
-
-void sendChunk(int clientSocket, const string& chunk_sha)
+const size_t CHUNK_SIZE = 512 * 1024;
+void sendChunk(int clientSocket, const int& chunk_no, const string & filesha)
 {
-    // Check if the requested chunk exists
-    if (clientFileMetadata.find(chunk_sha) == clientFileMetadata.end())
+    // Check if the file sha exists
+    if (clientFileMetadata.find(filesha) == clientFileMetadata.end())
     {
-        string errorMessage = "Chunk not found";
+        string errorMessage = "file not found";
         send(clientSocket, errorMessage.c_str(), errorMessage.size(), 0);
         return;
     }
 
     // Open the file containing the chunk
-    string filePath = clientFileMetadata[chunk_sha].first;
+    string filePath = clientFileMetadata[filesha].first;
+    // Open the file in binary mode
     ifstream chunkFile(filePath, ios::binary);
     if (!chunkFile.is_open())
     {
-        string errorMessage = "Error opening chunk file";
+        cerr << "Error: Could not open file " << filePath << endl;
+        string errorMessage = "Error: Could not open file";
         send(clientSocket, errorMessage.c_str(), errorMessage.size(), 0);
         return;
     }
 
-    // Read the chunk data
-    char buffer[512 * 1024]; // 512 KB buffer
+    // Calculate the file offset for the specific chunk
+    size_t offset = chunk_no * CHUNK_SIZE;
+
+    // Move the file read pointer to the offset
+    chunkFile.seekg(offset, ios::beg);
+    if (!chunkFile)
+    {
+        cerr << "Error: Failed to seek to chunk " << chunk_no << endl;
+        string errorMessage = "Error: Invalid chunk number";
+        send(clientSocket, errorMessage.c_str(), errorMessage.size(), 0);
+        chunkFile.close();
+        return;
+    }
+
+    // Read the specific chunk data
+    char buffer[CHUNK_SIZE];
     chunkFile.read(buffer, sizeof(buffer));
     streamsize bytesRead = chunkFile.gcount();
     chunkFile.close();
-    string response(buffer);
+
     // Send the chunk data to the client
     if (bytesRead > 0)
     {
-        cout<<"sending final chunk"<<response<<endl;
+        string temp (buffer, bytesRead);
+        string response = filesha + " " +temp;
+
+        cout << "Sending chunk " << chunk_no << ": " << response << endl;
         send(clientSocket, response.c_str(), response.size(), 0);
+    }
+    else
+    {
+        cerr << "Error: No data read for chunk " << chunk_no << endl;
+        string errorMessage = "Error: No data for chunk";
+        send(clientSocket, errorMessage.c_str(), errorMessage.size(), 0);
     }
 }
 void listenForChunkRequests(int listenPort)
@@ -68,10 +93,10 @@ void listenForChunkRequests(int listenPort)
         // cout<<"listenport"<<listenPort<<endl;
         if(request.rfind("chunk_info", 0) == 0)
         {
-            // cout<<"request.substr(10) in client server side just check sha"<<request.substr(11)<<"end"<<endl;
+            cout<<"request.substr(11) in client server side just check sha"<<request.substr(11)<<"end"<<endl;
 
              auto it=clientFileMetadata.begin();
-            //  cout<<"it first is"<<it->first<<"end"<<endl;
+             cout<<"it first is"<<it->first<<"end"<<endl;
 
             if(clientFileMetadata.find(request.substr(11))==clientFileMetadata.end())
             {
@@ -82,6 +107,7 @@ void listenForChunkRequests(int listenPort)
             }
             
              vector<string> chunk_hashes= clientFileMetadata[request.substr(11)].second;
+             // i think case is not possible
              if(chunk_hashes.size()==0)
              {
                 cout<<" i can't send 1st response as entry exist but with o chunks "<<endl;
@@ -92,7 +118,8 @@ void listenForChunkRequests(int listenPort)
             int count=0;
              for(auto & i:chunk_hashes)
              {
-                response+= i + " " + to_string(count++) + " ";
+                if(i.size()==0) {count++;continue;}
+                response+=  to_string(count++) + " ";
              }
              cout<<" sending 1st response from client server side : " <<response<<endl;
 
@@ -100,9 +127,15 @@ void listenForChunkRequests(int listenPort)
         }
         else if (request.rfind("download_chunk", 0) == 0)
         {
-            string chunk_sha = request.substr(15);
-            cout<<"sending 2nd response from client side : "<<chunk_sha<<endl;
-            sendChunk(clientSocket, chunk_sha);
+            istringstream iss(request);
+            string command;
+            string filesha ;
+            string schunk_no;
+            iss>>command>>filesha>>schunk_no;
+            int chunk_no =stoi(schunk_no);
+            cout<<"command is"<<command<<" file sha is"<<filesha<<" chunk no is"<<chunk_no<<endl;
+            cout<<"sending 2nd response from client side : "<<chunk_no<<endl;
+            sendChunk(clientSocket, chunk_no, filesha);
         }
 
         close(clientSocket);
@@ -161,11 +194,13 @@ int main(int argc, char *argv[])
 
     std::thread listener(listenForChunkRequests, port);
     listener.detach();
+    
 
     // Handle commands
     string command;
     while (true)
     {
+        
 
         cout << "\nMenu:\n";
         cout << "1. Create User\n";
