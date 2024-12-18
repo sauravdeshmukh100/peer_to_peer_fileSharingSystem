@@ -443,7 +443,7 @@ void handleClient(int clientSocket)
                     send(clientSocket, response.c_str(), response.size(), 0);
                     continue;
                 }
-                string response = "Sharable files and their chunk hashes:\n";
+                string response = "Sharable files and their hashes:\n";
                 for (const auto &entry : groups[group_id].file_owner)
                 {
                     if (users[entry.first].second == false)

@@ -11,10 +11,91 @@
 #include <set>
 #include <algorithm>
 #include <cmath>
+#include <queue>
+#include <condition_variable>
+#include <functional>
+#include <atomic>
+#include <filesystem>
 
 // Shared mutex for thread safety
 std::mutex downloadMutex;
 using namespace std;
+
+const size_t CHUNK_SIZE = 10;
+std::mutex ioMutex;
+
+void printMessage(const std::string &message)
+{
+    // std::lock_guard<std::mutex> lock(ioMutex); // Lock the mutex
+    std::cout << message << std::endl;
+}
+
+void readInput(std::string &input)
+{
+    // std::lock_guard<std::mutex> lock(ioMutex); // Lock the mutex
+    // std::cout << "Enter input: ";
+    std::getline(std::cin, input);
+}
+
+class ThreadPool
+{
+public:
+    ThreadPool(size_t numThreads)
+    {
+        for (size_t i = 0; i < numThreads; ++i)
+        {
+            workers.emplace_back([this]
+                                 {
+                while (true)
+                {
+                    std::function<void()> task;
+
+                    // Lock the task queue
+                    {
+                        std::unique_lock<std::mutex> lock(queueMutex);
+                        condition.wait(lock, [this] { return !tasks.empty() || stop; });
+
+                        if (stop && tasks.empty())
+                            return; // Exit thread if stopping and no tasks remain
+
+                        task = std::move(tasks.front());
+                        tasks.pop();
+                    }
+
+                    // Execute the task
+                    task();
+                } });
+        }
+    }
+
+    ~ThreadPool()
+    {
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            stop = true;
+        }
+        condition.notify_all();
+        for (std::thread &worker : workers)
+            worker.join();
+    }
+
+    // Add a new task to the pool
+    void enqueue(std::function<void()> task)
+    {
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            tasks.emplace(std::move(task));
+        }
+        condition.notify_one();
+    }
+
+private:
+    std::vector<std::thread> workers;
+    std::queue<std::function<void()>> tasks;
+    std::mutex queueMutex;
+    std::condition_variable condition;
+    bool stop = false;
+};
 
 void createAndStoreFileMetadata(const string &curr_client, pair<string, pair<string, vector<string>>> &entry);
 
@@ -30,7 +111,7 @@ int connectToTracker(const string &ip, int port)
 
     if (clientSocket < 0)
     {
-        cerr << "Error creating client socket" << endl;
+        printMessage("Error creating client socket");
         return -1;
     }
 
@@ -42,7 +123,7 @@ int connectToTracker(const string &ip, int port)
     // Connect to tracker
     if (connect(clientSocket, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) < 0)
     {
-        cerr << "Error connecting to tracker having ip " << ip << " and port " << port << endl;
+        printMessage("Error connecting to tracker having ip " + ip + " and port " + to_string(port));
         return -1;
     }
 
@@ -61,13 +142,13 @@ void createUserAccount(int clientSocket, const string &user_id, const string &pa
 
     if (bytesReceived > 0)
     {
-        cout << "Tracker response: " << buffer << endl;
+        printMessage("Tracker response: " + string(buffer));
     }
     else
     {
-        cerr << "Error receiving response from tracker" << endl;
+        printMessage("Error receiving response from tracker");
     }
-    //   cout << "Tracker response: " << buffer <<   endl;
+    //   printMessage("Tracker response: " + string(buffer));
 }
 
 void loginUser(int clientSocket, const string &user_id, const string &password, string &ip, string &port)
@@ -83,23 +164,23 @@ void loginUser(int clientSocket, const string &user_id, const string &password, 
 
     if (bytesReceived > 0)
     {
-        cout << "Tracker response: " << buffer << endl;
+        printMessage("Tracker response: " + string(buffer));
     }
     else
     {
-        cerr << "Error receiving response from tracker" << endl;
+        printMessage("Error receiving response from tracker");
     }
 
     loadFileMetadata(curr_client);
-    //   cout << "Tracker response: " << buffer <<   endl;
+    //   printMessage("Tracker response: " + string(buffer));
 }
 
 void createGroup(int clientSocket, const string &group_id)
 {
     string request = "create_group " + group_id;
-    //   cout<<"sending request is "<<request<<"\n";
+    //   printMessage("sending request is " + request);
     send(clientSocket, request.c_str(), request.size(), MSG_NOSIGNAL);
-    //   cout<<"response sent"<<  endl;
+    //   printMessage("response sent");
     // Receive response
     // Receive the response
     char buffer[1024] = {0}; // Ensure enough space for the response
@@ -107,14 +188,14 @@ void createGroup(int clientSocket, const string &group_id)
 
     if (bytesReceived > 0)
     {
-        cout << "Tracker response: " << buffer << endl;
+        printMessage("Tracker response: " + string(buffer));
     }
     else
     {
-        cerr << "Error receiving response from tracker" << endl;
+        printMessage("Error receiving response from tracker");
     }
-    //     cout<<"response came"<<  endl;
-    //   cout << "Tracker response: " << buffer <<   endl;
+    //     printMessage("response came");
+    //   printMessage("Tracker response: " + string(buffer));
 }
 
 void joinGroup(int clientSocket, const string &group_id)
@@ -125,7 +206,7 @@ void joinGroup(int clientSocket, const string &group_id)
     // Receive response
     char buffer[1024] = {0};
     recv(clientSocket, buffer, sizeof(buffer), 0);
-    cout << "Tracker response: " << buffer << endl;
+    printMessage("Tracker response: " + string(buffer));
 }
 
 void listPendingJoinRequests(int clientSocket, const string &group_id)
@@ -136,7 +217,7 @@ void listPendingJoinRequests(int clientSocket, const string &group_id)
     // Receive response
     char buffer[1024] = {0};
     recv(clientSocket, buffer, sizeof(buffer), 0);
-    cout << "Tracker response: " << buffer << endl;
+    printMessage("Tracker response: " + string(buffer));
 }
 
 void leaveGroup(int clientSocket, const string &group_id)
@@ -147,7 +228,7 @@ void leaveGroup(int clientSocket, const string &group_id)
     // Receive response
     char buffer[1024] = {0};
     recv(clientSocket, buffer, sizeof(buffer), 0);
-    cout << "Tracker response: " << buffer << endl;
+    printMessage("Tracker response: " + string(buffer));
 }
 
 void acceptJoinRequest(int clientSocket, const string &group_id, const string &user_id)
@@ -158,7 +239,7 @@ void acceptJoinRequest(int clientSocket, const string &group_id, const string &u
     // Receive response
     char buffer[1024] = {0};
     recv(clientSocket, buffer, sizeof(buffer), 0);
-    cout << "Tracker response: " << buffer << endl;
+    printMessage("Tracker response: " + string(buffer));
 }
 
 void listAllGroups(int clientSocket)
@@ -169,7 +250,7 @@ void listAllGroups(int clientSocket)
     // Receive response
     char buffer[1024] = {0};
     recv(clientSocket, buffer, sizeof(buffer), 0);
-    cout << "Tracker response: " << buffer << endl;
+    printMessage("Tracker response: " + string(buffer));
 }
 
 void listGroupMembers(int clientSocket, const std::string &group_id)
@@ -183,11 +264,11 @@ void listGroupMembers(int clientSocket, const std::string &group_id)
 
     if (bytesReceived > 0)
     {
-        std::cout << "Group members: " << buffer << std::endl;
+        printMessage("Group members: " + string(buffer));
     }
     else
     {
-        std::cerr << "Error receiving response from tracker" << std::endl;
+        printMessage("Error receiving response from tracker");
     }
 }
 
@@ -202,11 +283,11 @@ void logout(int clientSocket)
 
     if (bytesReceived > 0)
     {
-        std::cout << buffer << std::endl;
+        printMessage(string(buffer));
     }
     else
     {
-        std::cerr << "Error receiving response from tracker" << std::endl;
+        printMessage("Error receiving response from tracker");
     }
 
     // createAndStoreFileMetadata();
@@ -219,7 +300,7 @@ void listFiles(int clientSocket, const string &group_id)
 
     char buffer[1024] = {0};
     recv(clientSocket, buffer, sizeof(buffer), 0);
-    cout << "Tracker response: " << buffer << endl;
+    printMessage("Tracker response: " + string(buffer));
 }
 
 std::pair<string, std::vector<string>> generateFileHash(const string &filePath)
@@ -227,7 +308,7 @@ std::pair<string, std::vector<string>> generateFileHash(const string &filePath)
     int file = open(filePath.c_str(), O_RDONLY);
     if (file < 0)
     {
-        std::cerr << "Error opening file: " << filePath << std::endl;
+        printMessage("Error opening file: " + filePath);
         return {"", {}}; // Return empty string and vector if file can't be opened
     }
 
@@ -237,7 +318,7 @@ std::pair<string, std::vector<string>> generateFileHash(const string &filePath)
 
     std::vector<string> chunkHashes; // Vector to store chunk hashes
     unsigned char chunkHash[SHA_DIGEST_LENGTH];
-    char buffer[512 * 1024]; // Buffer for 512 KB
+    char buffer[CHUNK_SIZE]; // Buffer for 512 KB
     ssize_t bytesRead;
 
     // Read the file in chunks
@@ -281,7 +362,7 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
 {
     if (group_id.empty())
     {
-        cout << "Enter a valid group ID." << endl;
+        printMessage("Enter a valid group ID.");
         return;
     }
 
@@ -289,7 +370,7 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
     ifstream file(filePath, ios::binary);
     if (!file.is_open())
     {
-        cout << "Error opening file: " << filePath << endl;
+        printMessage("Error opening file: " + filePath);
         return;
     }
 
@@ -300,7 +381,7 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
     // Get the position of the file pointer (file size) in bytes
     std::streampos fileSize = file.tellg();
 
-    const size_t CHUNK_SIZE = 512 * 1024; // 512 KB
+    // 512 KB
     vector<string> chunkHashesVec;
     string fullFileHash;
     vector<char> buffe(CHUNK_SIZE);
@@ -311,7 +392,7 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
 
     while (file.read(buffe.data(), CHUNK_SIZE) || file.gcount() > 0)
     {
-        cout<<"yes i am insde loop"<<endl;
+        printMessage("yes i am insde loop");
         size_t bytesRead = file.gcount();
 
         // Calculate chunk hash
@@ -324,7 +405,7 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
         {
             ss << hex << setw(2) << setfill('0') << static_cast<int>(chunkHash[i]);
         }
-        cout<<"pushing entry to vec "<<ss.str()<<endl;
+        printMessage("pushing entry to vec " + ss.str());
         chunkHashesVec.push_back(ss.str());
 
         // Update full file hash context
@@ -347,7 +428,7 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
 
     if (fullFileHash.empty())
     {
-        cout << "Error generating file hash." << endl;
+        printMessage("Error generating file hash.");
         return;
     }
 
@@ -361,7 +442,8 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
     // }
 
     // Send the file metadata to the tracker
-    cout << "Sending metadata to tracker..." << endl;
+    printMessage("Sending metadata to tracker...");
+
     send(clientSocket, request.c_str(), request.size(), 0);
 
     // Receive the response from the tracker
@@ -372,13 +454,14 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
     if (response != "You are not a member of this group." && response != "This file path already exists.")
     {
         clientFileMetadata[fullFileHash] = {filePath, chunkHashesVec};
-        cout<<"storing entry in map size of chunkhashvec "<<chunkHashesVec.size()<<endl;
-        cout << "stored entry with " << fullFileHash << endl;
+        printMessage("storing entry in map size of chunkhashvec " + to_string(chunkHashesVec.size()));
+        printMessage("stored entry with " + fullFileHash);
+
         pair<string, pair<string, vector<string>>> entry = {fullFileHash, {filePath, chunkHashesVec}};
         createAndStoreFileMetadata(curr_client, entry);
     }
 
-    cout << "Tracker response: " << response << endl;
+    printMessage("Tracker response: " + response);
 }
 
 void createAndStoreFileMetadata(const string &curr_client, pair<string, pair<string, vector<string>>> &entry)
@@ -394,7 +477,7 @@ void createAndStoreFileMetadata(const string &curr_client, pair<string, pair<str
     ofstream outFile(filePath, ios::app);
     if (!outFile)
     {
-        cerr << "Error creating file: " << filePath << endl;
+        printMessage("Error creating file: " + filePath);
         return;
     }
 
@@ -411,7 +494,7 @@ void createAndStoreFileMetadata(const string &curr_client, pair<string, pair<str
     outFile << "\n";
 
     outFile.close();
-    cout << "Metadata stored in file: " << filePath << endl;
+    printMessage("Metadata stored in file: " + filePath);
 }
 
 void loadFileMetadata(const string &curr_client)
@@ -424,7 +507,6 @@ void loadFileMetadata(const string &curr_client)
     ifstream inFile(filePath);
     if (!inFile)
     {
-        // cerr << "Error opening file: " << filePath << endl;
         return;
     }
 
@@ -446,7 +528,7 @@ void loadFileMetadata(const string &curr_client)
     }
 
     inFile.close();
-    cout << "Metadata loaded from file: " << filePath << endl;
+    printMessage("Metadata loaded from file: " + filePath);
 }
 
 int connectToPeer(const string &peer_ip, int peer_port)
@@ -455,7 +537,7 @@ int connectToPeer(const string &peer_ip, int peer_port)
     int peerSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (peerSocket < 0)
     {
-        cerr << "Error creating socket." << endl;
+        printMessage("Error creating socket.");
         return -1;
     }
 
@@ -467,7 +549,7 @@ int connectToPeer(const string &peer_ip, int peer_port)
     // Convert IP address from string to binary form
     if (inet_pton(AF_INET, peer_ip.c_str(), &peerAddr.sin_addr) <= 0)
     {
-        cerr << "Invalid IP address: " << peer_ip << endl;
+        printMessage("Invalid IP address: " + peer_ip);
         close(peerSocket);
         return -1;
     }
@@ -475,32 +557,36 @@ int connectToPeer(const string &peer_ip, int peer_port)
     // Connect to the peer
     if (connect(peerSocket, (struct sockaddr *)&peerAddr, sizeof(peerAddr)) < 0)
     {
-        cerr << "Connection to " << peer_ip << ":" << peer_port << " failed." << endl;
+        printMessage("Connection to " + peer_ip + ":" + to_string(peer_port) + " failed.");
         close(peerSocket);
         return -1;
     }
     else
     {
-        cout << "connected to ip" << peer_ip << "  and port " << peer_port << endl;
+        // printMessage("Connected to IP: " + peer_ip + " and port: " + to_string(peer_port));
     }
 
     return peerSocket; // Return the socket descriptor for communication
 }
 
 // Function to connect to peer and fetch chunk information
-void fetchChunkInfo(const string &peer_ip, int peer_port, map<int, set<string>> &chunkToPeers, const string &file_sha)
+bool fetchChunkInfo(const string &peer_ip, int peer_port, map<int, set<string>> &chunkToPeers, const string &file_sha)
 {
     int peerSocket = connectToPeer(peer_ip, peer_port);
     if (peerSocket < 0)
     {
-        cerr << "Failed to connect to peer: " << peer_ip << ":" << peer_port << endl;
-        return;
+        printMessage("Failed to connect to peer: " + peer_ip + ":" + to_string(peer_port));
+        return false;
     }
 
     // Request chunk information
     string request = "chunk_info " + file_sha;
     send(peerSocket, request.c_str(), request.size(), 0);
-
+    if (request == "entry not found for this file" or request == "no chunk found for this entry")
+    {
+        printMessage("Response from tracker: " + request);
+        return false;
+    }
     // Receive chunk info from peer
     char buffer[4096] = {0};
     recv(peerSocket, buffer, sizeof(buffer), 0);
@@ -511,10 +597,9 @@ void fetchChunkInfo(const string &peer_ip, int peer_port, map<int, set<string>> 
     int chunk_id;
     while (iss >> chunk_id)
     {
-        // std::lock_guard<std::mutex> lock(downloadMutex);
         chunkToPeers[chunk_id].insert(peer_ip + " " + to_string(peer_port));
     }
-
+    return true;
     close(peerSocket);
 }
 
@@ -532,19 +617,92 @@ string calculateSHA1(const char *data, size_t size)
     return ss.str();
 }
 
+bool ensureFileExists(const std::string &filePath)
+{
+    // Check if file exists
+    if (std::filesystem::exists(filePath))
+    {
+        // Truncate the file if it exists
+        std::ofstream truncateFile(filePath, std::ios::binary | std::ios::trunc);
+        if (!truncateFile)
+        {
+            std::cerr << "Error: Unable to truncate file: " << filePath << std::endl;
+            return false;
+        }
+    //     truncateFile.seekp(total_chunks * CHUNK_SIZE - 1); // Move to the last byte
+    //    truncateFile.write("", 1);
+        truncateFile.close(); // Close after truncation
+    }
+    else
+    {
+        // Create the file if it does not exist
+        std::ofstream tempFile(filePath, std::ios::binary);
+        if (!tempFile)
+        {
+            std::cerr << "Error: Unable to create file: " << filePath << std::endl;
+            return false;
+        }
+    //     tempFile.seekp(total_chunks * CHUNK_SIZE - 1); // Move to the last byte
+    //    tempFile.write("", 1);
+        tempFile.close(); // Close after creation
+    }
+    // cout << "inside ensurefilecontent" << endl;
+    
+    return true;
+}
+
+bool writeChunkToFile(const std::string &filePath, const std::string &chunkContent, int chunk_no, size_t chunkSize)
+{
+    // Ensure the file exists
+    // if (!ensureFileExists(filePath))
+    // {
+    //     return false;
+    // }
+
+    // Open the file for updating
+    std::fstream outFile(filePath, std::ios::binary | std::ios::in | std::ios::out);
+    // std::fstream outFileUpdate(destination_path, std::ios::binary | std::ios::in | std::ios::out);
+
+    if (!outFile)
+    {
+        std::cerr << "Error: Unable to open file for writing: " << filePath << std::endl;
+        return false;
+    }
+
+    // Seek to the correct position and write the chunk
+    // cout<<"writng chunk to file"<<chunkContent<<endl;
+    outFile.seekp(chunk_no * chunkSize);
+    // Print file pointer position
+    std::streampos currentPosition = outFile.tellp();
+    // if(chunk_no==0)
+    // cout << "writing content of " << chunk_no << " at " << currentPosition << " and the content is /n" << chunkContent << endl
+        //  << endl;
+    // std::cout << "File pointer position after seekp: for chunk_no "<<chunk_no<<" " <<  << std::endl;
+    outFile.write(chunkContent.data(), chunkContent.size());
+    // outFile.close();
+
+    return true;
+}
+
 // Function to download a chunk
-void downloadChunk(const int &chunk_no, const string &peer_info, const string &destination_path, const string &filesha)
+bool downloadChunk(const int &chunk_no, const string &peer_info, const string &destination_path, const string &filesha)
 {
     istringstream peerStream(peer_info);
+
     string peer_ip;
     int peer_port;
     peerStream >> peer_ip >> peer_port;
+    if (peer_ip.empty() || peer_port <= 0)
+    {
+        printMessage("Invalid peer_info in downloading chunks: " + peer_info);
+        return false;
+    }
 
     int peerSocket = connectToPeer(peer_ip, peer_port);
     if (peerSocket < 0)
     {
-        cerr << "Failed to connect to peer: " << peer_ip << ":" << peer_port << endl;
-        return;
+        printMessage("Failed to connect to peer: " + peer_ip + ":" + to_string(peer_port));
+        return false;
     }
 
     // Request specific chunk
@@ -552,7 +710,7 @@ void downloadChunk(const int &chunk_no, const string &peer_info, const string &d
     send(peerSocket, request.c_str(), request.size(), 0);
 
     // Receive chunk data
-    char chunkBuffer[512 * 1024 + 42]; // 512 KB buffer + extra 41 bytes for chunk sha and spcace
+    char chunkBuffer[CHUNK_SIZE + 42]; // 512 KB buffer + extra 41 bytes for chunk sha and space
     int bytesReceived = recv(peerSocket, chunkBuffer, sizeof(chunkBuffer), 0);
 
     if (bytesReceived > 0)
@@ -564,7 +722,15 @@ void downloadChunk(const int &chunk_no, const string &peer_info, const string &d
         {
             string receivedChunkSha = receivedData.substr(0, spacePos); // Extract received chunk SHA
             string chunkContent = receivedData.substr(spacePos + 1);    // Extract chunk content
-            cout<<"chunkContent is"<<chunkContent<<endl;
+            // printMessage("Chunk content received. for chunk " + to_string(chunk_no) + " " + chunkContent );
+            cout << endl
+                 << endl;
+
+            if (chunkContent.empty())
+            {
+                printMessage("Error: Received empty chunk content for chunk " + to_string(chunk_no));
+                return false;
+            }
 
             // Calculate SHA1 of the chunk content
             string calculatedSha = calculateSHA1(chunkContent.data(), chunkContent.size());
@@ -572,34 +738,43 @@ void downloadChunk(const int &chunk_no, const string &peer_info, const string &d
             // Verify chunk integrity
             if (calculatedSha == receivedChunkSha)
             {
-                cout << "Chunk integrity verified. Writing to file..." << endl;
-                // here
-                std::lock_guard<std::mutex> lock(downloadMutex);
-                ofstream outFile(destination_path, ios::binary | ios::out);
-                cout << "destination path" << destination_path << endl;
-                if (!outFile)
-                {
-                    cout << "error in writing file" << endl;
-                }
-                outFile.seekp(chunk_no * 512 * 1024);
-                outFile.write(chunkContent.data(), chunkContent.size());
-                outFile.close();
+                // printMessage("Chunk integrity verified. Writing to file...");
 
-                // clientFileMetadata[filesha]={destination_path,}
+                if (!writeChunkToFile(destination_path, chunkContent, chunk_no, CHUNK_SIZE))
+                {
+                    printMessage("Error: Failed to write chunk to file.");
+                    return false;
+                }
+
+                // Updating client map as this chunk is downloaded successfully
+                // printMessage("Updating client map as this chunk is downloaded successfully.");
+                if (chunk_no >= clientFileMetadata[filesha].second.size())
+                {
+                    printMessage("Can't store info for this chunk in client map: " + to_string(chunk_no));
+                }
+                else
+                {
+                    clientFileMetadata[filesha].second[chunk_no] = calculatedSha;
+                }
+                return true;
             }
             else
             {
-                cerr << "Error: Chunk integrity check failed for chunk " << chunk_no << endl;
+                printMessage("Error: Chunk integrity check failed for chunk " + to_string(chunk_no));
+                printMessage("calcusha=" + calculatedSha + " recivedsha=" + receivedChunkSha);
+                return false;
             }
         }
         else
         {
-            cerr << "Error: Malformed chunk data received." << endl;
+            printMessage("Error: Malformed chunk data received.");
+            return false;
         }
     }
     else
     {
-        cerr << "Error: Failed to receive chunk data from peer." << endl;
+        printMessage("Error: Failed to receive chunk data from peer.");
+        return false;
     }
 
     close(peerSocket);
@@ -617,11 +792,11 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     char buffer[4096] = {0};
     recv(clientSocket, buffer, sizeof(buffer), 0);
     string peerInfo(buffer);
-    cout << "reponse from tracker " << peerInfo << endl;
+    // printMessage("Response from tracker: " + peerInfo);
 
     if (peerInfo == "File not found")
     {
-        cout << "Error: File not found in group." << endl;
+        printMessage("Error: File not found in group.");
         return;
     }
 
@@ -630,10 +805,15 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     string peer_ip;
     int peer_port;
     vector<pair<string, int>> peers;
-    cout << "parsing peerinfo" << endl;
+    // printMessage("Parsing peer info.");
     while (peerStream >> peer_ip >> peer_port)
     {
-        cout << "peer_ip " << peer_ip << " peer_port" << peer_port << endl;
+        // printMessage("Peer IP: " + peer_ip + " Peer Port: " + to_string(peer_port));
+        if (peer_ip.empty() || peer_port <= 0)
+        {
+            printMessage("Invalid peer info.");
+            continue;
+        }
 
         peers.emplace_back(peer_ip, peer_port);
     }
@@ -643,28 +823,24 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     vector<thread> threads;
     for (const auto &[peer_ip1, peer_port1] : peers)
     {
-        cout << "peer_ip " << peer_ip1 << " peer_port" << peer_port1 << endl;
-        // threads.emplace_back(fetchChunkInfo, peer_ip, peer_port, std::ref(chunkToPeers), file_sha);
-        fetchChunkInfo(peer_ip1, peer_port1, chunkToPeers, file_sha);
+        // printMessage("Peer IP: " + peer_ip1 + " Peer Port: " + to_string(peer_port1));
+        if (fetchChunkInfo(peer_ip1, peer_port1, chunkToPeers, file_sha) == false)
+        {
+            printMessage("Download failed due to inability to fetch chunk info.");
+            return;
+        }
     }
-    // this file have have total these many chunks
+    // this file have total these many chunks
     total_chunks = chunkToPeers.size();
-
+    cout<<"totalchunk is "<<total_chunks<<endl;
     // assume first all the chunks will be downloaded
     clientFileMetadata[file_sha].first = destination_path;
     for (int i = 0; i < total_chunks; i++)
     {
-        // just pushing empty string so that we can directly acces v[i]
         clientFileMetadata[file_sha].second.push_back("");
     }
 
-    // after using total_chunks variable set this variable to 0 as it is gloabal
-    total_chunks = 0;
-    // Wait for all threads to complete
-    // for (auto& t : threads)
-    // {
-    //     t.join();
-    // }
+   
 
     // Apply rarest-first piece selection
     vector<int> chunks;
@@ -675,27 +851,65 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     sort(chunks.begin(), chunks.end(), [&chunkToPeers](const int &a, const int &b)
          { return chunkToPeers[a].size() < chunkToPeers[b].size(); }); // Rarest first
 
-    // Download chunks using multithreading
+    if (!ensureFileExists(destination_path))
+    {
+        return;
+    }
+
+    // Open the file in binary mode for updating ony once
+    
+    
+
+
+     // after using total_chunks variable set this variable to 0 as it is global
+    total_chunks = 0;
+    // Download chunks using thread pooling
     vector<thread> downloadThreads;
-    int chunk_id = 0;
+
+    // Thread Pool for downloading chunks
+    ThreadPool threadPool(4); // Initialize with 4 worker threads (adjust as needed)
+    std::atomic<int> successCount(0);
+
+    // Add download tasks to the thread pool
     for (const int &chunk_no : chunks)
     {
+        threadPool.enqueue([&, chunk_no]()
+                           {
         for (const string &peer_info : chunkToPeers[chunk_no])
         {
-            downloadThreads.emplace_back(downloadChunk, chunk_no, peer_info, destination_path, file_sha);
-        }
+            if (downloadChunk(chunk_no, peer_info, destination_path, file_sha))
+            {
+                successCount++; // Increment the success counter if downloadChunk returns true
+                // cout<<"increemnting success"<<endl;
+                break; // Exit the inner loop as the chunk has been successfully downloaded
+            }
+        } });
     }
 
-    // if atleast one chunk of file is not downloaded just do following
-    // clientFileMetadata.erase(file_sha); // we wiil try our best to download at least one chunk as chunk may
-    // availbale to many peers
+    // Wait for all tasks to finish by relying on ThreadPool destructor (automatically waits)
+    std::this_thread::sleep_for(std::chrono::seconds(2)); // Optional wait to allow completion
 
-    
-    // Wait for all downloads to complete
-    for (auto &t : downloadThreads)
+    // Output result
+    printMessage("successcount = " + to_string(successCount));
+    std::fstream outFile(destination_path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!outFile)
     {
-        t.join();
+        printMessage("Error: Unable to open file for writing.");
+        return;
+    }
+    outFile.close();
+
+    if (successCount == 0)
+    {
+        clientFileMetadata.erase(file_sha);
+        printMessage("Unable to download file " + file_sha);
     }
 
-    cout << "File downloaded successfully to " << destination_path << endl;
+    else
+    {
+        // send tracker info that u have downloaded this file successfully
+    }
+
+    printMessage("File downloaded successfully to " + destination_path);
+    // cout <<  << destination_path << endl;
 }

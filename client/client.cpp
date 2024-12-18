@@ -11,7 +11,8 @@ using namespace std;
 
 // Mock storage for chunks
 // map<string, string> chunkStorage; // chunk_sha -> file path
-const size_t CHUNK_SIZE = 512 * 1024;
+// const size_t CHUNK_SIZE = 2;
+
 void sendChunk(int clientSocket, const int& chunk_no, const string & filesha)
 {
     // Check if the file sha exists
@@ -28,7 +29,7 @@ void sendChunk(int clientSocket, const int& chunk_no, const string & filesha)
     ifstream chunkFile(filePath, ios::binary);
     if (!chunkFile.is_open())
     {
-        cerr << "Error: Could not open file " << filePath << endl;
+        printMessage("Error: Could not open file " + filePath);
         string errorMessage = "Error: Could not open file";
         send(clientSocket, errorMessage.c_str(), errorMessage.size(), 0);
         return;
@@ -41,7 +42,7 @@ void sendChunk(int clientSocket, const int& chunk_no, const string & filesha)
     chunkFile.seekg(offset, ios::beg);
     if (!chunkFile)
     {
-        cerr << "Error: Failed to seek to chunk " << chunk_no << endl;
+        printMessage("Error: Failed to seek to chunk " + to_string(chunk_no));
         string errorMessage = "Error: Invalid chunk number";
         send(clientSocket, errorMessage.c_str(), errorMessage.size(), 0);
         chunkFile.close();
@@ -58,18 +59,20 @@ void sendChunk(int clientSocket, const int& chunk_no, const string & filesha)
     if (bytesRead > 0)
     {
         string temp (buffer, bytesRead);
-        string response = filesha + " " +temp;
+        cout<<"for chunkno "<<chunk_no<<" sending data "<<temp.substr(0,10)<<endl;
+        string response = clientFileMetadata[filesha].second[chunk_no] + " " + temp;
 
-        cout << "Sending chunk " << chunk_no << ": " << response << endl;
+        printMessage("Sending chunk " + to_string(chunk_no) );
         send(clientSocket, response.c_str(), response.size(), 0);
     }
     else
     {
-        cerr << "Error: No data read for chunk " << chunk_no << endl;
+        printMessage("Error: No data read for chunk " + to_string(chunk_no));
         string errorMessage = "Error: No data for chunk";
         send(clientSocket, errorMessage.c_str(), errorMessage.size(), 0);
     }
 }
+
 void listenForChunkRequests(int listenPort)
 {
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -89,52 +92,53 @@ void listenForChunkRequests(int listenPort)
         recv(clientSocket, buffer, sizeof(buffer), 0);
 
         string request(buffer);
-        // cout<<" request to client from client "<<request<<endl;
-        // cout<<"listenport"<<listenPort<<endl;
         if(request.rfind("chunk_info", 0) == 0)
         {
-            cout<<"request.substr(11) in client server side just check sha"<<request.substr(11)<<"end"<<endl;
+            printMessage("Request received: " + request.substr(11));
 
-             auto it=clientFileMetadata.begin();
-             cout<<"it first is"<<it->first<<"end"<<endl;
+            auto it = clientFileMetadata.begin();
+            printMessage("First entry key: " + it->first);
 
-            if(clientFileMetadata.find(request.substr(11))==clientFileMetadata.end())
+            string response;
+
+            if(clientFileMetadata.find(request.substr(11)) == clientFileMetadata.end())
             {
-                cout<<" I can't send first reponse there is no entry with given hash "<<endl;
-                
+                printMessage("Entry not found for given hash");
+                response = "entry not found for this file";
+                send(clientSocket, response.c_str(), response.size(), 0);
                 close(clientSocket);
                 continue;
             }
             
-             vector<string> chunk_hashes= clientFileMetadata[request.substr(11)].second;
-             // i think case is not possible
-             if(chunk_hashes.size()==0)
-             {
-                cout<<" i can't send 1st response as entry exist but with o chunks "<<endl;
+            vector<string> chunk_hashes = clientFileMetadata[request.substr(11)].second;
+              
+            if(chunk_hashes.size() == 0)
+            {
+                printMessage("No chunks found for the given entry");
+                response = "no chunk found for this entry";
+                send(clientSocket, response.c_str(), response.size(), 0);
                 close(clientSocket);
                 continue;
-             }
-             string response;
-            int count=0;
-             for(auto & i:chunk_hashes)
-             {
-                if(i.size()==0) {count++;continue;}
-                response+=  to_string(count++) + " ";
-             }
-             cout<<" sending 1st response from client server side : " <<response<<endl;
-
-             send(clientSocket, response.c_str(),response.size(),0);
+            }
+            
+            int count = 0;
+            for (auto & i : chunk_hashes)
+            {
+                if (i.size() == 0) { count++; continue; }
+                response += to_string(count++) + " ";
+            }
+            printMessage("Sending response: " + response);
+            send(clientSocket, response.c_str(), response.size(), 0);
         }
         else if (request.rfind("download_chunk", 0) == 0)
         {
             istringstream iss(request);
-            string command;
-            string filesha ;
-            string schunk_no;
-            iss>>command>>filesha>>schunk_no;
-            int chunk_no =stoi(schunk_no);
-            cout<<"command is"<<command<<" file sha is"<<filesha<<" chunk no is"<<chunk_no<<endl;
-            cout<<"sending 2nd response from client side : "<<chunk_no<<endl;
+            string command, filesha, schunk_no;
+            iss >> command >> filesha >> schunk_no;
+            int chunk_no = stoi(schunk_no);
+
+            printMessage("Command: " + command + ", File SHA: " + filesha + ", Chunk No: " + to_string(chunk_no));
+            printMessage("Sending chunk request: " + to_string(chunk_no));
             sendChunk(clientSocket, chunk_no, filesha);
         }
 
@@ -145,42 +149,43 @@ void listenForChunkRequests(int listenPort)
 
 
 
+
 int main(int argc, char *argv[])
 {
     if (argc != 3)
     {
-        cerr << "Usage: ./client <IP>:<PORT> tracker_info.txt" << endl;
+        printMessage("Usage: ./client <IP>:<PORT> tracker_info.txt");
         return 1;
     }
 
     // Step 1: Parse the <IP>:<PORT> argument
-    string ip_port = argv[1];
+    std::string ip_port = argv[1];
     size_t colon_pos = ip_port.find(':');
-    if (colon_pos == string::npos)
+    if (colon_pos == std::string::npos)
     {
-        cerr << "Invalid IP:PORT format. Expected <IP>:<PORT>." << endl;
+        printMessage("Invalid IP:PORT format. Expected <IP>:<PORT>.");
         return 1;
     }
 
-    string ip = ip_port.substr(0, colon_pos); // Extract IP
+    std::string ip = ip_port.substr(0, colon_pos);
     int port;
     try
     {
-        port = stoi(ip_port.substr(colon_pos + 1)); // Extract PORT and convert to integer
+        port = std::stoi(ip_port.substr(colon_pos + 1));
     }
-    catch (const invalid_argument &e)
+    catch (const std::invalid_argument &e)
     {
-        cerr << "Invalid port number." << endl;
+        printMessage("Invalid port number.");
         return 1;
     }
 
-    string trackerInfoFile = argv[2]; // tracker_info.txt path
+    std::string trackerInfoFile = argv[2];
 
     // Step 2: Read the tracker info
-    vector<TrackerInfo> trackers = readTrackerInfo(trackerInfoFile);
+    std::vector<TrackerInfo> trackers = readTrackerInfo(trackerInfoFile);
     if (trackers.empty())
     {
-        cerr << "No trackers found in tracker_info.txt" << endl;
+        printMessage("No trackers found in tracker_info.txt");
         return 1;
     }
 
@@ -188,190 +193,183 @@ int main(int argc, char *argv[])
     int clientSocket = connectToTracker(trackers[0].ip, trackers[0].port);
     if (clientSocket < 0)
     {
-        cerr << "Cannot connect to tracker" << endl;
+        printMessage("Cannot connect to tracker");
         return 1;
     }
 
     std::thread listener(listenForChunkRequests, port);
     listener.detach();
-    
 
     // Handle commands
-    string command;
+    std::string command;
     while (true)
     {
-        
+        printMessage("\nMenu:\n"
+                     "1. Create User\n"
+                     "2. Login\n"
+                     "3. Create Group\n"
+                     "4. Join Group\n"
+                     "5. Leave Group\n"
+                     "6. List Pending Join Requests\n"
+                     "7. Accept Join Request\n"
+                     "8. List All Groups\n"
+                     "9. List All Members of a Group\n"
+                     "10. Logout\n"
+                     "11. List All Sharable Files in Group\n"
+                     "12. Upload File to Group\n"
+                     "13. Download File from Group\n"
+                     "0. Exit\n");
 
-        cout << "\nMenu:\n";
-        cout << "1. Create User\n";
-        cout << "2. Login\n";
-        cout << "3. Create Group\n";
-        cout << "4. Join Group\n";
-        cout << "5. Leave Group\n";
-        cout << "6. List Pending Join Requests\n";
-        cout << "7. Accept Join Request\n";
-        cout << "8. List All Groups\n";
-        cout << "9. List All Members of a Group\n";
-        cout << "10. to logout\n";
-        cout << "11. List All Sharable Files in Group\n";
-        cout << "12. Upload File to Group\n";
-         cout << "13. dowload File from Group\n";
-        cout << "0. Exit\n";
+        printMessage("Enter your choice: ");
+        readInput(command);
 
-        cout << "Enter your choice: ";
-
-        std::getline(std::cin, command);
-
-        // Convert command input to an integer
         int choice;
         try
         {
-            choice = std::stoi(command); // Convert the entire string input to an integer
+            choice = std::stoi(command);
         }
         catch (std::invalid_argument &e)
         {
-            std::cerr << "Invalid input. Please enter a valid number." << std::endl;
+            printMessage("Invalid input. Please enter a valid number.");
             continue;
         }
 
         switch (choice)
         {
-        case 1:
-        { // Create User
-            string user_id, passwd;
-            cout << "Enter user ID and password: ";
-            getline(cin, command);
-            istringstream iss(command);
+        case 1: // Create User
+        {
+            std::string user_id, passwd;
+            printMessage("Enter user ID and password: ");
+            readInput(command);
+            std::istringstream iss(command);
             iss >> user_id >> passwd;
             if (user_id.empty() || passwd.empty())
             {
-                cerr << "Invalid input. Please provide both user ID and password." << endl;
+                printMessage("Invalid input. Please provide both user ID and password.");
                 break;
             }
             createUserAccount(clientSocket, user_id, passwd);
             break;
         }
 
-        case 2:
-        { // Login
-            string user_id, passwd;
-            cout << "Enter user ID and password: ";
-            getline(cin, command);
-            istringstream iss(command);
+        case 2: // Login
+        {
+            std::string user_id, passwd;
+            printMessage("Enter user ID and password: ");
+            readInput(command);
+            std::istringstream iss(command);
             iss >> user_id >> passwd;
             if (user_id.empty() || passwd.empty())
             {
-                cerr << "Invalid input. Please provide both user ID and password." << endl;
+                printMessage("Invalid input. Please provide both user ID and password.");
                 break;
             }
-            string temp_port = to_string(port);
+            std::string temp_port = std::to_string(port);
             loginUser(clientSocket, user_id, passwd, ip, temp_port);
             break;
         }
-        case 3:
-        { // Create Group
-            string group_id;
-            cout << "Enter group ID: ";
-            getline(cin, group_id);
+        case 3: // Create Group
+        {
+            std::string group_id;
+            printMessage("Enter group ID: ");
+            readInput(group_id);
             createGroup(clientSocket, group_id);
             break;
         }
-        case 4:
-        { // Join Group
-            string group_id;
-            cout << "Enter group ID  ";
-            getline(cin, group_id);
+        case 4: // Join Group
+        {
+            std::string group_id;
+            printMessage("Enter group ID: ");
+            readInput(group_id);
             joinGroup(clientSocket, group_id);
             break;
         }
-        case 5:
-        { // Leave Group
-            string group_id;
-            cout << "Enter group ID  ";
-            getline(cin, group_id);
+        case 5: // Leave Group
+        {
+            std::string group_id;
+            printMessage("Enter group ID: ");
+            readInput(group_id);
             leaveGroup(clientSocket, group_id);
             break;
         }
-        case 6:
-        { // List Pending Join Requests
-            string group_id;
-            cout << "Enter group ID : ";
-            getline(cin, group_id);
+        case 6: // List Pending Join Requests
+        {
+            std::string group_id;
+            printMessage("Enter group ID: ");
+            readInput(group_id);
             listPendingJoinRequests(clientSocket, group_id);
             break;
         }
-        case 7:
-        { // Accept Join Request
-            string group_id, user_id;
-            cout << "Enter group ID and user id: ";
-            getline(cin, command);
-            istringstream iss(command);
+        case 7: // Accept Join Request
+        {
+            std::string group_id, user_id;
+            printMessage("Enter group ID and user ID: ");
+            readInput(command);
+            std::istringstream iss(command);
             iss >> group_id >> user_id;
             acceptJoinRequest(clientSocket, group_id, user_id);
             break;
         }
-        case 8:
-        { // List All Groups
+        case 8: // List All Groups
+        {
             listAllGroups(clientSocket);
             break;
         }
-        case 9:
-        { // List All Members of a Group (New Option)
+        case 9: // List All Members of a Group
+        {
             std::string group_id;
-            std::cout << "Enter group ID: ";
-            std::getline(std::cin, group_id);
-            listGroupMembers(clientSocket, group_id); // New function to handle the request
+            printMessage("Enter group ID: ");
+            readInput(group_id);
+            listGroupMembers(clientSocket, group_id);
             break;
         }
-        case 10:
+        case 10: // Logout
         {
-
             logout(clientSocket);
             break;
         }
-        case 11:
+        case 11: // List All Sharable Files in Group
         {
-            string group_id;
-            cout << "Enter group ID: ";
-            getline(cin, group_id);
+            std::string group_id;
+            printMessage("Enter group ID: ");
+            readInput(group_id);
             listFiles(clientSocket, group_id);
             break;
         }
-
-        case 12:
+        case 12: // Upload File to Group
         {
-            string file_path, group_id;
-            cout << "Enter file path and group ID: ";
-            getline(cin, file_path);
-            getline(cin, group_id);
+            std::string file_path, group_id;
+            printMessage("Enter file path: ");
+            readInput(file_path);
+            printMessage("Enter group ID: ");
+            readInput(group_id);
             uploadFile(clientSocket, file_path, group_id);
             break;
         }
-
-        case 13:
+        case 13: // Download File from Group
         {
-            string group_id, file_sha, destination_path;
-            cout<<"enter gorupid filesha destination path: ";
-            cin>> group_id>>file_sha>>destination_path;
-            download_file(clientSocket,group_id,file_sha,destination_path);
+            std::string group_id, file_sha, destination_path;
+            printMessage("Enter group ID: ");
+            readInput(group_id);
+            printMessage("Enter file SHA: ");
+            readInput(file_sha);
+            printMessage("Enter destination path: ");
+            readInput(destination_path);
+            download_file(clientSocket, group_id, file_sha, destination_path);
             break;
         }
-
         case 0: // Exit
         {
-            string request = "exit";
+            std::string request = "exit";
             send(clientSocket, request.c_str(), request.size(), 0);
-            cout << "Exiting..." << endl;
-            // close(clientSocket);
+            printMessage("Exiting...");
             return 0;
         }
-
         default:
-            cout << "Invalid choice. Please try again." << endl;
+            printMessage("Invalid choice. Please try again.");
         }
     }
 }
 
-//    cout<<"coming out of while\n";
 
-// }
+
