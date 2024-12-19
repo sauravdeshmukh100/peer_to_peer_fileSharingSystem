@@ -53,12 +53,12 @@ void handleClient(int clientSocket)
             cout << "didn't recirebvr anything from client " << endl;
             users[curr_client].second = false;
             // Delete file associated with the user
-            string directory = "client_ip-ports";
-            string filePath = directory + "/" + curr_client;
-            if (remove(filePath.c_str()) != 0)
-            {
-                cerr << "Error deleting file for user: " << curr_client << endl;
-            }
+            // string directory = "client_ip-ports";
+            // string filePath = directory + "/" + curr_client;
+            // if (remove(filePath.c_str()) != 0)
+            // {
+            //     cerr << "Error deleting file for user: " << curr_client << endl;
+            // }
 
             curr_client = "";
             cout << "logging out from user " << curr_client << "\n";
@@ -80,12 +80,12 @@ void handleClient(int clientSocket)
             cout << "connection closed from client\n";
             users[curr_client].second = false;
             // Delete file associated with the user
-            string directory = "client_ip-ports";
-            string filePath = directory + "/" + curr_client;
-            if (remove(filePath.c_str()) != 0)
-            {
-                cerr << "Error deleting file for user: " << curr_client << endl;
-            }
+            // string directory = "client_ip-ports";
+            // string filePath = directory + "/" + curr_client;
+            // if (remove(filePath.c_str()) != 0)
+            // {
+            //     cerr << "Error deleting file for user: " << curr_client << endl;
+            // }
             curr_client = "";
             cout << "logging out from user " << curr_client << "\n";
             close(clientSocket);
@@ -138,25 +138,25 @@ void handleClient(int clientSocket)
 
                 
                 // Create directory if it does not exist
-                string directory = "client_ip-ports";
-                struct stat st = {0};
-                if (stat(directory.c_str(), &st) == -1)
-                {
-                    mkdir(directory.c_str(), 0700);
-                }
+                // string directory = "client_ip-ports";
+                // struct stat st = {0};
+                // if (stat(directory.c_str(), &st) == -1)
+                // {
+                //     mkdir(directory.c_str(), 0700);
+                // }
 
                 // Create file with user_id as name and store IP and port
-                string filePath = directory + "/" + curr_client;
-                ofstream outFile(filePath);
-                if (outFile.is_open())
-                {
-                    outFile << client_ip << " " << client_port;
-                    outFile.close();
-                }
-                else
-                {
-                    cerr << "Error creating file for user: " << curr_client << endl;
-                }
+                // string filePath = directory + "/" + curr_client;
+                // ofstream outFile(filePath);
+                // if (outFile.is_open())
+                // {
+                //     outFile << client_ip << " " << client_port;
+                //     outFile.close();
+                // }
+                // else
+                // {
+                //     cerr << "Error creating file for user: " << curr_client << endl;
+                // }
 
                 string response = "Login successful.";
                 send(clientSocket, response.c_str(), response.size(), 0);
@@ -416,12 +416,12 @@ void handleClient(int clientSocket)
             users[curr_client].second = false;
 
             // Delete file associated with the user
-            string directory = "client_ip-ports";
-            string filePath = directory + "/" + curr_client;
-            if (remove(filePath.c_str()) != 0)
-            {
-                cerr << "Error deleting file for user: " << curr_client << endl;
-            }
+            // string directory = "client_ip-ports";
+            // string filePath = directory + "/" + curr_client;
+            // if (remove(filePath.c_str()) != 0)
+            // {
+            //     cerr << "Error deleting file for user: " << curr_client << endl;
+            // }
 
             curr_client = "";
             // cout << " curr client size is " << curr_client.size() << endl;
@@ -486,10 +486,10 @@ void handleClient(int clientSocket)
             string group_id;
             string fileName, fileHash;
             vector<string> chunkHashes;
-
+             string filesize;
             // Step 1: Extract group_id, fileName, and fileHash from the message
-            iss >> group_id >> fileName >> fileHash;
-            cout << "group_id is " << group_id << " filename is " << fileName << endl;
+            iss >> group_id >> fileName >>filesize>>fileHash;
+            cout << "group_id is " << group_id << " filename is " << fileName << "filesize is"<<filesize<< endl;
             // Step 2: Extract chunk hashes (rest of the message)
            
             // Step 3: Check if the group exists
@@ -525,7 +525,7 @@ void handleClient(int clientSocket)
                     continue;
                 }
 
-                groups[group_id].fileSha_to_peers[fileHash].first=fileName ;
+                groups[group_id].fileSha_to_peers[fileHash].first=fileName + " " + filesize;
                 groups[group_id].fileSha_to_peers[fileHash].second.push_back(temp) ;
 
                 // groups[group_id].file_owner[curr_client].push_back(fileName);
@@ -555,9 +555,11 @@ void handleClient(int clientSocket)
                 send(clientSocket, response.c_str(), response.size(), 0);
                 return;
             }
-
+          istringstream name_size (groups[group_id].fileSha_to_peers[file_sha].first);
+          string name,filesize;
+          name_size>>name>>filesize;
             // Collect peers sharing the file
-            string response;
+            string response=  filesize + " " ;
            //  sending reponse as  ip an ]d port of each peer having content of this file 
             for (const string & temp : groups[group_id].fileSha_to_peers[file_sha].second)
             {

@@ -59,8 +59,10 @@ void sendChunk(int clientSocket, const int& chunk_no, const string & filesha)
     if (bytesRead > 0)
     {
         string temp (buffer, bytesRead);
-        cout<<"for chunkno "<<chunk_no<<" sending data "<<temp.substr(0,10)<<endl;
+        
+        // cout<<"for chunkno "<<chunk_no<<" sending data "<<temp.substr(0,10)<<endl;
         string response = clientFileMetadata[filesha].second[chunk_no] + " " + temp;
+        cout<<"sending data of size"<<response.size()<<endl;
 
         printMessage("Sending chunk " + to_string(chunk_no) );
         send(clientSocket, response.c_str(), response.size(), 0);
@@ -92,12 +94,13 @@ void listenForChunkRequests(int listenPort)
         recv(clientSocket, buffer, sizeof(buffer), 0);
 
         string request(buffer);
+        cout<<"request recieved="<<request<<endl;
         if(request.rfind("chunk_info", 0) == 0)
         {
-            printMessage("Request received: " + request.substr(11));
+            // printMessage("Request received: " + request.substr(11));
 
             auto it = clientFileMetadata.begin();
-            printMessage("First entry key: " + it->first);
+            // printMessage("First entry key: " + it->first);
 
             string response;
 
@@ -132,6 +135,7 @@ void listenForChunkRequests(int listenPort)
         }
         else if (request.rfind("download_chunk", 0) == 0)
         {
+            cout<<"inside doenload "<<endl;
             istringstream iss(request);
             string command, filesha, schunk_no;
             iss >> command >> filesha >> schunk_no;

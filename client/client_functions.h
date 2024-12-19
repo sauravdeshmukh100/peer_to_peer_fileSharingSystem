@@ -20,8 +20,8 @@
 // Shared mutex for thread safety
 std::mutex downloadMutex;
 using namespace std;
-
-const size_t CHUNK_SIZE = 10;
+  size_t FILESIZE;
+int CHUNK_SIZE = 512 * 1024; // 512 *1024 = 512 KB
 std::mutex ioMutex;
 
 void printMessage(const std::string &message)
@@ -358,6 +358,21 @@ std::pair<string, std::vector<string>> generateFileHash(const string &filePath)
     return {overallHashStream.str(), chunkHashes};
 }
 
+
+
+size_t calculateFileSize(const std::string &filePath)
+{
+    try
+    {
+        return std::filesystem::file_size(filePath);
+    }
+    catch (const std::filesystem::filesystem_error &e)
+    {
+        std::cerr << "Error calculating file size: " << e.what() << std::endl;
+        return 0;
+    }
+}
+
 void uploadFile(int clientSocket, const string &filePath, const string &group_id)
 {
     if (group_id.empty())
@@ -374,13 +389,7 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
         return;
     }
 
-    // knowing file size
-    // Move the file pointer to the end
-    // file.seekg(0, std::ios::end);
-
-    // Get the position of the file pointer (file size) in bytes
-    std::streampos fileSize = file.tellg();
-
+    
     // 512 KB
     vector<string> chunkHashesVec;
     string fullFileHash;
@@ -432,11 +441,18 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
         return;
     }
 
+    
+
+    // Get the position of the file pointer (file size) in bytes
+    size_t fileSize =calculateFileSize(filePath);
+    cout<<"filesize="<<fileSize<<endl;
+
+
     // Extract filename from the file path
     string fileName = filePath.substr(filePath.find_last_of("/") + 1);
 
     // Format the message to send to the tracker
-    string request = "upload_file " + group_id + " " + fileName + " " + fullFileHash;
+    string request = "upload_file " + group_id + " " + fileName +  " " +  to_string(fileSize) +  " " + fullFileHash;
     // for (const auto& chunkHash : chunkHashesVec) {
     //     request += chunkHash + " ";
     // }
@@ -629,8 +645,8 @@ bool ensureFileExists(const std::string &filePath)
             std::cerr << "Error: Unable to truncate file: " << filePath << std::endl;
             return false;
         }
-    //     truncateFile.seekp(total_chunks * CHUNK_SIZE - 1); // Move to the last byte
-    //    truncateFile.write("", 1);
+        //     truncateFile.seekp(total_chunks * CHUNK_SIZE - 1); // Move to the last byte
+        //    truncateFile.write("", 1);
         truncateFile.close(); // Close after truncation
     }
     else
@@ -642,12 +658,12 @@ bool ensureFileExists(const std::string &filePath)
             std::cerr << "Error: Unable to create file: " << filePath << std::endl;
             return false;
         }
-    //     tempFile.seekp(total_chunks * CHUNK_SIZE - 1); // Move to the last byte
-    //    tempFile.write("", 1);
+        //     tempFile.seekp(total_chunks * CHUNK_SIZE - 1); // Move to the last byte
+        //    tempFile.write("", 1);
         tempFile.close(); // Close after creation
     }
     // cout << "inside ensurefilecontent" << endl;
-    
+
     return true;
 }
 
@@ -676,7 +692,7 @@ bool writeChunkToFile(const std::string &filePath, const std::string &chunkConte
     std::streampos currentPosition = outFile.tellp();
     // if(chunk_no==0)
     // cout << "writing content of " << chunk_no << " at " << currentPosition << " and the content is /n" << chunkContent << endl
-        //  << endl;
+    //  << endl;
     // std::cout << "File pointer position after seekp: for chunk_no "<<chunk_no<<" " <<  << std::endl;
     outFile.write(chunkContent.data(), chunkContent.size());
     // outFile.close();
@@ -704,80 +720,120 @@ bool downloadChunk(const int &chunk_no, const string &peer_info, const string &d
         printMessage("Failed to connect to peer: " + peer_ip + ":" + to_string(peer_port));
         return false;
     }
-
-    // Request specific chunk
+     // Request specific chunk
     string request = "download_chunk " + filesha + " " + to_string(chunk_no);
     send(peerSocket, request.c_str(), request.size(), 0);
 
-    // Receive chunk data
-    char chunkBuffer[CHUNK_SIZE + 42]; // 512 KB buffer + extra 41 bytes for chunk sha and space
-    int bytesReceived = recv(peerSocket, chunkBuffer, sizeof(chunkBuffer), 0);
+    // Calculate size to receive
+    size_t size = 41;              // For SHA and space
+    size_t filesize = FILESIZE; // Example 1 MB file size
+    cout<<"filesize in download chunk"<<filesize<<endl;
+    int q = filesize / CHUNK_SIZE;
 
-    if (bytesReceived > 0)
+    if (chunk_no == q)
     {
-        string receivedData(chunkBuffer, bytesReceived);
-        size_t spacePos = receivedData.find(' ');
+        size += filesize % CHUNK_SIZE;
+    }
+    else
+    {
+        size += CHUNK_SIZE;
+    }
 
-        if (spacePos != string::npos)
+    // Allocate buffer dynamically
+
+    // cout << "chunk_no=" << chunk_no << endl;
+    char *chunkBuffer = new char[size];
+    // cout << "Expected size for chunk " << chunk_no << ": " << size << endl;
+
+    // Receive chunk data
+    size_t bytesReceived = 0;
+    // cout << "outside loop" << endl;
+    while (bytesReceived < size)
+    {
+        cout << "Waiting to receive " << size - bytesReceived << " more bytes for chunk " << chunk_no << endl;
+
+        int recieved = recv(peerSocket, chunkBuffer + bytesReceived, size - bytesReceived, 0);
+        if (recieved <= 0)
         {
-            string receivedChunkSha = receivedData.substr(0, spacePos); // Extract received chunk SHA
-            string chunkContent = receivedData.substr(spacePos + 1);    // Extract chunk content
-            // printMessage("Chunk content received. for chunk " + to_string(chunk_no) + " " + chunkContent );
-            cout << endl
-                 << endl;
-
-            if (chunkContent.empty())
+            if (recieved == 0)
             {
-                printMessage("Error: Received empty chunk content for chunk " + to_string(chunk_no));
-                return false;
-            }
-
-            // Calculate SHA1 of the chunk content
-            string calculatedSha = calculateSHA1(chunkContent.data(), chunkContent.size());
-
-            // Verify chunk integrity
-            if (calculatedSha == receivedChunkSha)
-            {
-                // printMessage("Chunk integrity verified. Writing to file...");
-
-                if (!writeChunkToFile(destination_path, chunkContent, chunk_no, CHUNK_SIZE))
-                {
-                    printMessage("Error: Failed to write chunk to file.");
-                    return false;
-                }
-
-                // Updating client map as this chunk is downloaded successfully
-                // printMessage("Updating client map as this chunk is downloaded successfully.");
-                if (chunk_no >= clientFileMetadata[filesha].second.size())
-                {
-                    printMessage("Can't store info for this chunk in client map: " + to_string(chunk_no));
-                }
-                else
-                {
-                    clientFileMetadata[filesha].second[chunk_no] = calculatedSha;
-                }
-                return true;
+                std::cerr << "Connection closed by peer for chunk " << chunk_no << "." << std::endl;
             }
             else
             {
-                printMessage("Error: Chunk integrity check failed for chunk " + to_string(chunk_no));
-                printMessage("calcusha=" + calculatedSha + " recivedsha=" + receivedChunkSha);
+                std::cerr << "Error during recv for chunk " << chunk_no << ": " << strerror(errno) << std::endl;
+            }
+            delete[] chunkBuffer;
+            close(peerSocket);
+            return false;
+        }
+
+        bytesReceived += recieved;
+        cout << "Received " << recieved << " bytes. Total received for chunk " << chunk_no << ": " << bytesReceived << endl;
+    }
+
+    // cout << "below loop" << endl;
+
+    // Parse received data
+    string receivedData(chunkBuffer, bytesReceived);
+    delete[] chunkBuffer; // Free the buffer
+    size_t spacePos = receivedData.find(' ');
+
+    if (spacePos != string::npos)
+    {
+        string receivedChunkSha = receivedData.substr(0, spacePos); // Extract received chunk SHA
+        string chunkContent = receivedData.substr(spacePos + 1);    // Extract chunk content
+
+        if (chunkContent.empty())
+        {
+            printMessage("Error: Received empty chunk content for chunk " + to_string(chunk_no));
+            close(peerSocket);
+            cout << "getting of for chunk " << chunk_no << endl;
+            return false;
+        }
+
+        // Calculate SHA1 of the chunk content
+        string calculatedSha = calculateSHA1(chunkContent.data(), chunkContent.size());
+
+        // Verify chunk integrity
+        if (calculatedSha == receivedChunkSha)
+        {
+            if (!writeChunkToFile(destination_path, chunkContent, chunk_no, CHUNK_SIZE))
+            {
+                printMessage("Error: Failed to write chunk to file.");
+                close(peerSocket);
+                cout << "getting of for chunk " << chunk_no << endl;
                 return false;
             }
+
+            // cout << "for chunk_no " << chunk_no << " calsha=" << calculatedSha << " resha" << receivedChunkSha << endl;
+
+            // Update client map
+            if (chunk_no >= clientFileMetadata[filesha].second.size())
+            {
+                printMessage("Can't store info for this chunk in client map: " + to_string(chunk_no));
+            }
+            else
+            {
+                clientFileMetadata[filesha].second[chunk_no] = calculatedSha;
+            }
+            cout << "getting of for chunk " << chunk_no << endl;
+            close(peerSocket);
+            return true;
         }
         else
         {
-            printMessage("Error: Malformed chunk data received.");
-            return false;
+            printMessage("Error: Chunk integrity check failed for chunk " + to_string(chunk_no));
+            printMessage("calcusha=" + calculatedSha + " receivedsha=" + receivedChunkSha);
         }
     }
     else
     {
-        printMessage("Error: Failed to receive chunk data from peer.");
-        return false;
+        printMessage("Error: Malformed chunk data received.");
     }
-
+    cout << "getting of for chunk " << chunk_no << endl;
     close(peerSocket);
+    return false;
 }
 
 void download_file(int clientSocket, const string &group_id, const string &file_sha, const string &destination_path)
@@ -806,6 +862,10 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     int peer_port;
     vector<pair<string, int>> peers;
     // printMessage("Parsing peer info.");
+    string filesize;
+    peerStream>>filesize;
+    cout<<"got filesize in client side is"<<filesize<<endl;
+    FILESIZE=stoi(filesize);
     while (peerStream >> peer_ip >> peer_port)
     {
         // printMessage("Peer IP: " + peer_ip + " Peer Port: " + to_string(peer_port));
@@ -832,15 +892,13 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     }
     // this file have total these many chunks
     total_chunks = chunkToPeers.size();
-    cout<<"totalchunk is "<<total_chunks<<endl;
+    cout << "totalchunk is " << total_chunks << endl;
     // assume first all the chunks will be downloaded
     clientFileMetadata[file_sha].first = destination_path;
     for (int i = 0; i < total_chunks; i++)
     {
         clientFileMetadata[file_sha].second.push_back("");
     }
-
-   
 
     // Apply rarest-first piece selection
     vector<int> chunks;
@@ -857,11 +915,8 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     }
 
     // Open the file in binary mode for updating ony once
-    
-    
 
-
-     // after using total_chunks variable set this variable to 0 as it is global
+    // after using total_chunks variable set this variable to 0 as it is global
     total_chunks = 0;
     // Download chunks using thread pooling
     vector<thread> downloadThreads;
