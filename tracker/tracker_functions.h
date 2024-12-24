@@ -9,6 +9,7 @@
 #include <fstream>  // For std::ofstream
 #include<set>
 #include <sys/stat.h> // For struct stat and mkdir
+#include <unordered_map>
 
 // #include <openssl/evp.h> // For EVP functions
 #include <openssl/sha.h>
@@ -453,11 +454,11 @@ void handleClient(int clientSocket)
                     // const auto & chunkHashes = entry.second; // Get the pair (file hash, chunk hashes)
 
                     // response +=  ;
-                    set<pair<string,string>> st;
+                    unordered_map<string,string> st;
                     for (auto &hash : filehashes)
                     {
                         string filename=groups[group_id].fileSha_to_peers[hash].first;
-                        st.insert({filename,hash}); //used set to remove duplicates
+                        st.insert({hash,filename}); //used set to remove duplicates
                     }
                    // iterate through set
                    for(auto & it :st)
@@ -518,7 +519,7 @@ void handleClient(int clientSocket)
                         continue;
 
                     }
-                    string response = "This file  is already uploaded but you can share it now";
+                    string response = "This file  is  uploaded by u also";
                     groups[group_id].fileSha_to_peers[fileHash].second.push_back(temp);
                     groups[group_id].file_owner[curr_client].push_back(fileHash);
                     send(clientSocket, response.c_str(), response.size(), 0);
@@ -531,7 +532,7 @@ void handleClient(int clientSocket)
                 // groups[group_id].file_owner[curr_client].push_back(fileName);
                 groups[group_id].file_owner[curr_client].push_back(fileHash);
                 // Send success response to client
-                string response = "File metadata stored successfully.";
+                string response = "File uploaded  successfully.";
                 send(clientSocket, response.c_str(), response.size(), 0);
             }
             else
@@ -547,6 +548,18 @@ void handleClient(int clientSocket)
             string group_id, file_sha;
             iss >> group_id >> file_sha;
 
+
+            // check wheather he is member of grpup
+            if (find(groups[group_id].members.begin(), groups[group_id].members.end(), curr_client) == groups[group_id].members.end())
+                {
+                    // Client is not a member of the group
+                    string response = "You are not a member of this group.";
+                    send(clientSocket, response.c_str(), response.size(), 0);
+                    continue;
+                }
+
+
+            
             // Validate group and file existence
             if (groups.find(group_id) == groups.end() ||
                 groups[group_id].fileSha_to_peers.find(file_sha) == groups[group_id].fileSha_to_peers.end())
@@ -555,6 +568,10 @@ void handleClient(int clientSocket)
                 send(clientSocket, response.c_str(), response.size(), 0);
                 return;
             }
+
+            // check whearher has he already uploaded or downloaded this file
+
+            // if(groups[])
           istringstream name_size (groups[group_id].fileSha_to_peers[file_sha].first);
           string name,filesize;
           name_size>>name>>filesize;
@@ -571,6 +588,49 @@ void handleClient(int clientSocket)
             }
             cout<<"response is  \n"<<response<<endl;
             // Send peer information to client
+            send(clientSocket, response.c_str(), response.size(), 0);
+        }
+
+        else if (command == "stop_share")
+        {
+            string group_id, file_sha;
+            iss >> group_id >> file_sha;
+
+
+            // check wheather he is member of grpup
+            if (find(groups[group_id].members.begin(), groups[group_id].members.end(), curr_client) == groups[group_id].members.end())
+                {
+                    // Client is not a member of the group
+                    string response = "You are not a member of this group.";
+                    send(clientSocket, response.c_str(), response.size(), 0);
+                    continue;
+                }
+
+
+            
+            // Validate group and file existence
+            if (groups.find(group_id) == groups.end() ||
+                groups[group_id].fileSha_to_peers.find(file_sha) == groups[group_id].fileSha_to_peers.end())
+            {
+                string response = "File not found";
+                send(clientSocket, response.c_str(), response.size(), 0);
+                continue;
+            }
+
+          // checking if current client can share this file or not
+           vector<string>  & temp=groups[group_id].file_owner[curr_client];
+           auto it=find(temp.begin(), temp.end(),file_sha);
+            if( it== temp.end())
+            {
+                string response = "u dont have this file";
+            send(clientSocket, response.c_str(), response.size(), 0);
+            continue;
+            }
+
+          
+          
+         temp.erase(it);
+            string response ="stopped sharing file" ;
             send(clientSocket, response.c_str(), response.size(), 0);
         }
     }

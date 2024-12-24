@@ -222,6 +222,7 @@ int main(int argc, char *argv[])
                      "11. List All Sharable Files in Group\n"
                      "12. Upload File to Group\n"
                      "13. Download File from Group\n"
+                     "14. Stop Share\n"
                      "0. Exit\n");
 
         printMessage("Enter your choice: ");
@@ -361,6 +362,17 @@ int main(int argc, char *argv[])
             readInput(destination_path);
             download_file(clientSocket, group_id, file_sha, destination_path);
             break;
+        }
+        case 14:
+        {
+            string groupid, file_sha;
+            printMessage("Enter group ID: ");
+            readInput(groupid);
+            printMessage("Enter file SHA: ");
+            readInput(file_sha);
+            stopshare(clientSocket, groupid, file_sha);
+            break;
+
         }
         case 0: // Exit
         {

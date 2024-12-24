@@ -1,0 +1,50 @@
+// tracker will have this  
+
+full_hash -> name , vector<peers>           // full file hash will be calculated by owner(who is uploading the file) only
+vector<peers> = string -> user_id , ip , port
+// leave group
+// logout or exit 
+// uploading
+// list of all sharable files 
+// download files
+---------------------------------------------------------------------------------------------------------
+//client will have this 
+full_hash-> {path, vector<chunk hashes> }  
+
+how to persist client side data ? what if user logout ?
+
+
+use thread pooling in downlaoad
+
+I need to update some functions before downloading as all the may not be able to download all the chunks of files
+
+what if user logout or exit  from one laptop and login in another laptop that is what if he changes its ip and port ?
+
+// lets assume user will not change its ip and port. Lets handle keep it simple.
+
+
+// 1.first client will say I want to download filesha to this path
+// 2.tracker will send ip and port 
+// 3. then i need to connect with different peers
+// 3. this will be stored in map
+   .
+   .
+   .
+
+//n. ig client need to tell tracker that i have downloaded this file so that he can update map of his side
+
+
+while downloading client-server will just send chunk_no to client at 1st connection
+i.e the concept number has to introduce in upload_file function itself.
+
+
+what i am thinking is it may happen file has total 100 chunks and you could download only one chunk which is late say 100th still you have to allocate full space of 100 chunks to file. so what I thinking why just don't u store file proper logicalyy , it doesn't matter how is stored physically. I mean in above case u would just allocate one chunk to file by denoting its number, u will store it at the start of file phyisically by showing it stored at end of file logically. Wichever chunk is downloaded first just store in that manner by keeping just mapping to chunk_no with file_position pointer ;
+
+// make sure u handle all the cases , i.e if chunk is not downloaded form one peer then u try to download from others ->this case remaing tohandle
+
+
+// opeing file, writng file, and closing file -> u should really mindfull when it comes to multithreading
+
+// take chunksize small for ex 2 b and take file size 10 b and check
+// u can encrypt password if u want
+// can a client download single file again and again -> as of now yes

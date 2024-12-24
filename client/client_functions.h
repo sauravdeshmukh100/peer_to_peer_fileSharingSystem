@@ -401,7 +401,7 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
 
     while (file.read(buffe.data(), CHUNK_SIZE) || file.gcount() > 0)
     {
-        printMessage("yes i am insde loop");
+        
         size_t bytesRead = file.gcount();
 
         // Calculate chunk hash
@@ -848,7 +848,7 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     char buffer[4096] = {0};
     recv(clientSocket, buffer, sizeof(buffer), 0);
     string peerInfo(buffer);
-    // printMessage("Response from tracker: " + peerInfo);
+    printMessage("Response from tracker: " + peerInfo);
 
     if (peerInfo == "File not found")
     {
@@ -932,6 +932,7 @@ void download_file(int clientSocket, const string &group_id, const string &file_
                            {
         for (const string &peer_info : chunkToPeers[chunk_no])
         {
+            // using for loop to access each peer having this chunk if i couldn't download from current one 
             if (downloadChunk(chunk_no, peer_info, destination_path, file_sha))
             {
                 successCount++; // Increment the success counter if downloadChunk returns true
@@ -963,8 +964,36 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     else
     {
         // send tracker info that u have downloaded this file successfully
+         string request = "upload_file " + group_id + " " + "abc" +  " " +  (filesize) +  " " + file_sha;
+         send(clientSocket, request.c_str(), request.size(), 0);
+
+        printMessage("File downloaded successfully to " + destination_path);
     }
 
-    printMessage("File downloaded successfully to " + destination_path);
+    
     // cout <<  << destination_path << endl;
+}
+
+
+void stopshare(int clientSocket, string & group_id, string & file_sha)
+{
+
+
+ // Send request to tracker for peer information
+    string request = "stop_share " + group_id + " " + file_sha;
+    send(clientSocket, request.c_str(), request.size(), 0);
+
+    // Receive response from tracker
+
+    char buffer[4096] = {0};
+    recv(clientSocket, buffer, sizeof(buffer), 0);
+    string response(buffer);
+    printMessage("Response from tracker: " + response);
+  // delete this entry from client side
+    if(response=="stopped sharing file")
+    {
+        clientFileMetadata.erase(file_sha);
+    }
+
+
 }
