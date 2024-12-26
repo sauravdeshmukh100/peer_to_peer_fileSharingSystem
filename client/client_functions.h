@@ -20,10 +20,12 @@
 // Shared mutex for thread safety
 std::mutex downloadMutex;
 using namespace std;
-  size_t FILESIZE;
+// size_t FILESIZE;
 int CHUNK_SIZE = 512 * 1024; // 512 *1024 = 512 KB
 std::mutex ioMutex;
-
+// mainting following maps for status of file . D (Downloading), C (Complete)
+map<string, pair<string, int>> D; /* status of files : DOWNLOADING -> map from file sha to {group_id, no of chunks downloaded}*/
+map<string, pair<string, int>> C; /*status of files : COMPLETED -> map from file sha to {group_id, no of chunks downloaded}*/
 void printMessage(const std::string &message)
 {
     // std::lock_guard<std::mutex> lock(ioMutex); // Lock the mutex
@@ -101,7 +103,7 @@ void createAndStoreFileMetadata(const string &curr_client, pair<string, pair<str
 
 void loadFileMetadata(const string &curr_client);
 // stroing the file hash -> <file_path, vector<chunk_hashes>>
-int total_chunks = 0;
+
 map<string, pair<string, vector<string>>> clientFileMetadata;
 // map<string, string> chunkStorage;
 string curr_client;
@@ -358,8 +360,6 @@ std::pair<string, std::vector<string>> generateFileHash(const string &filePath)
     return {overallHashStream.str(), chunkHashes};
 }
 
-
-
 size_t calculateFileSize(const std::string &filePath)
 {
     try
@@ -389,7 +389,6 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
         return;
     }
 
-    
     // 512 KB
     vector<string> chunkHashesVec;
     string fullFileHash;
@@ -401,7 +400,7 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
 
     while (file.read(buffe.data(), CHUNK_SIZE) || file.gcount() > 0)
     {
-        printMessage("yes i am insde loop");
+
         size_t bytesRead = file.gcount();
 
         // Calculate chunk hash
@@ -414,7 +413,7 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
         {
             ss << hex << setw(2) << setfill('0') << static_cast<int>(chunkHash[i]);
         }
-        printMessage("pushing entry to vec " + ss.str());
+        // printMessage("pushing entry to vec " + ss.str());
         chunkHashesVec.push_back(ss.str());
 
         // Update full file hash context
@@ -441,18 +440,15 @@ void uploadFile(int clientSocket, const string &filePath, const string &group_id
         return;
     }
 
-    
-
     // Get the position of the file pointer (file size) in bytes
-    size_t fileSize =calculateFileSize(filePath);
-    cout<<"filesize="<<fileSize<<endl;
-
+    size_t fileSize = calculateFileSize(filePath);
+    // cout << "filesize=" << fileSize << endl;
 
     // Extract filename from the file path
     string fileName = filePath.substr(filePath.find_last_of("/") + 1);
 
     // Format the message to send to the tracker
-    string request = "upload_file " + group_id + " " + fileName +  " " +  to_string(fileSize) +  " " + fullFileHash;
+    string request = "upload_file " + group_id + " " + fileName + " " + to_string(fileSize) + " " + fullFileHash;
     // for (const auto& chunkHash : chunkHashesVec) {
     //     request += chunkHash + " ";
     // }
@@ -701,7 +697,7 @@ bool writeChunkToFile(const std::string &filePath, const std::string &chunkConte
 }
 
 // Function to download a chunk
-bool downloadChunk(const int &chunk_no, const string &peer_info, const string &destination_path, const string &filesha)
+bool downloadChunk(int clientSocket, const int &chunk_no, const string &peer_info, const string &destination_path, const string &filesha, string group_id, string fs, int total_chunks)
 {
     istringstream peerStream(peer_info);
 
@@ -720,14 +716,14 @@ bool downloadChunk(const int &chunk_no, const string &peer_info, const string &d
         printMessage("Failed to connect to peer: " + peer_ip + ":" + to_string(peer_port));
         return false;
     }
-     // Request specific chunk
+    // Request specific chunk
     string request = "download_chunk " + filesha + " " + to_string(chunk_no);
     send(peerSocket, request.c_str(), request.size(), 0);
 
     // Calculate size to receive
-    size_t size = 41;              // For SHA and space
-    size_t filesize = FILESIZE; // Example 1 MB file size
-    cout<<"filesize in download chunk"<<filesize<<endl;
+    size_t size = 41;           // For SHA and space
+    size_t filesize = stoi(fs); // Example 1 MB file size
+    // cout << "filesize in download chunk" << filesize << endl;
     int q = filesize / CHUNK_SIZE;
 
     if (chunk_no == q)
@@ -750,7 +746,7 @@ bool downloadChunk(const int &chunk_no, const string &peer_info, const string &d
     // cout << "outside loop" << endl;
     while (bytesReceived < size)
     {
-        cout << "Waiting to receive " << size - bytesReceived << " more bytes for chunk " << chunk_no << endl;
+        // cout << "Waiting to receive " << size - bytesReceived << " more bytes for chunk " << chunk_no << endl;
 
         int recieved = recv(peerSocket, chunkBuffer + bytesReceived, size - bytesReceived, 0);
         if (recieved <= 0)
@@ -769,7 +765,7 @@ bool downloadChunk(const int &chunk_no, const string &peer_info, const string &d
         }
 
         bytesReceived += recieved;
-        cout << "Received " << recieved << " bytes. Total received for chunk " << chunk_no << ": " << bytesReceived << endl;
+        // cout << "Received " << recieved << " bytes. Total received for chunk " << chunk_no << ": " << bytesReceived << endl;
     }
 
     // cout << "below loop" << endl;
@@ -788,7 +784,7 @@ bool downloadChunk(const int &chunk_no, const string &peer_info, const string &d
         {
             printMessage("Error: Received empty chunk content for chunk " + to_string(chunk_no));
             close(peerSocket);
-            cout << "getting of for chunk " << chunk_no << endl;
+            // cout << "getting of for chunk " << chunk_no << endl;
             return false;
         }
 
@@ -816,8 +812,27 @@ bool downloadChunk(const int &chunk_no, const string &peer_info, const string &d
             else
             {
                 clientFileMetadata[filesha].second[chunk_no] = calculatedSha;
+                if (D[filesha].second == 0)
+                {
+                    // send tracker info that u have downloaded this file successfully
+                    string request = "upload_file " + group_id + " " + "abc" + " " + fs + " " + filesha;
+                    send(clientSocket, request.c_str(), request.size(), 0);
+
+                    printMessage("File downloaded successfully to " + destination_path);
+                }
+                if (D[filesha].second + 1 == total_chunks)
+                {
+                    C[filesha].second = D[filesha].second + 1;
+                     C[filesha].first = D[filesha].first;
+                    D.erase(filesha);
+                }
+                else
+                {
+
+                    D[filesha].second++;
+                }
             }
-            cout << "getting of for chunk " << chunk_no << endl;
+            // cout << "getting of for chunk " << chunk_no << endl;
             close(peerSocket);
             return true;
         }
@@ -831,14 +846,15 @@ bool downloadChunk(const int &chunk_no, const string &peer_info, const string &d
     {
         printMessage("Error: Malformed chunk data received.");
     }
-    cout << "getting of for chunk " << chunk_no << endl;
+    // cout << "getting of for chunk " << chunk_no << endl;
     close(peerSocket);
     return false;
 }
 
-void download_file(int clientSocket, const string &group_id, const string &file_sha, const string &destination_path)
+void downloadChunksThread(int clientSocket, const string &group_id, const string &file_sha, const string &destination_path)
 {
 
+    // cout << "inside download chunk thread " << endl;
     // Send request to tracker for peer information
     string request = "download_file " + group_id + " " + file_sha;
     send(clientSocket, request.c_str(), request.size(), 0);
@@ -848,11 +864,12 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     char buffer[4096] = {0};
     recv(clientSocket, buffer, sizeof(buffer), 0);
     string peerInfo(buffer);
-    // printMessage("Response from tracker: " + peerInfo);
+    printMessage("Response from tracker: " + peerInfo);
 
     if (peerInfo == "File not found")
     {
         printMessage("Error: File not found in group.");
+        D.erase(file_sha);
         return;
     }
 
@@ -863,9 +880,9 @@ void download_file(int clientSocket, const string &group_id, const string &file_
     vector<pair<string, int>> peers;
     // printMessage("Parsing peer info.");
     string filesize;
-    peerStream>>filesize;
-    cout<<"got filesize in client side is"<<filesize<<endl;
-    FILESIZE=stoi(filesize);
+    peerStream >> filesize;
+    // cout << "got filesize in client side is" << filesize << endl;
+    // FILESIZE = stoi(filesize);
     while (peerStream >> peer_ip >> peer_port)
     {
         // printMessage("Peer IP: " + peer_ip + " Peer Port: " + to_string(peer_port));
@@ -887,12 +904,14 @@ void download_file(int clientSocket, const string &group_id, const string &file_
         if (fetchChunkInfo(peer_ip1, peer_port1, chunkToPeers, file_sha) == false)
         {
             printMessage("Download failed due to inability to fetch chunk info.");
+            D.erase(file_sha);
             return;
         }
     }
     // this file have total these many chunks
+    int total_chunks = 0;
     total_chunks = chunkToPeers.size();
-    cout << "totalchunk is " << total_chunks << endl;
+    // cout << "totalchunk is " << total_chunks << endl;
     // assume first all the chunks will be downloaded
     clientFileMetadata[file_sha].first = destination_path;
     for (int i = 0; i < total_chunks; i++)
@@ -911,60 +930,114 @@ void download_file(int clientSocket, const string &group_id, const string &file_
 
     if (!ensureFileExists(destination_path))
     {
+        D.erase(file_sha);
         return;
     }
 
+    // cout << "feched file info" << endl;
+
     // Open the file in binary mode for updating ony once
 
-    // after using total_chunks variable set this variable to 0 as it is global
-    total_chunks = 0;
     // Download chunks using thread pooling
     vector<thread> downloadThreads;
 
     // Thread Pool for downloading chunks
     ThreadPool threadPool(4); // Initialize with 4 worker threads (adjust as needed)
-    std::atomic<int> successCount(0);
-
+    // cout << "before threead pool";
     // Add download tasks to the thread pool
     for (const int &chunk_no : chunks)
     {
         threadPool.enqueue([&, chunk_no]()
                            {
-        for (const string &peer_info : chunkToPeers[chunk_no])
-        {
-            if (downloadChunk(chunk_no, peer_info, destination_path, file_sha))
-            {
-                successCount++; // Increment the success counter if downloadChunk returns true
-                // cout<<"increemnting success"<<endl;
-                break; // Exit the inner loop as the chunk has been successfully downloaded
+    try {
+        for (const string &peer_info : chunkToPeers[chunk_no]) {
+            if (downloadChunk(clientSocket, chunk_no, peer_info, destination_path, file_sha, group_id, filesize, total_chunks)) {
+                break;
             }
-        } });
+        }
+    } catch (const std::exception &e) {
+        std::cerr << "Exception in thread: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "Unknown exception in thread." << std::endl;
+    } });
     }
 
     // Wait for all tasks to finish by relying on ThreadPool destructor (automatically waits)
     std::this_thread::sleep_for(std::chrono::seconds(2)); // Optional wait to allow completion
 
-    // Output result
-    printMessage("successcount = " + to_string(successCount));
+    // if i haven't store this file sha in map it means i haven't downloaded this file
+    if (clientFileMetadata.find(file_sha) == clientFileMetadata.end())
+        D.erase(file_sha);
+
     std::fstream outFile(destination_path, std::ios::binary | std::ios::in | std::ios::out);
     if (!outFile)
     {
         printMessage("Error: Unable to open file for writing.");
         return;
     }
-    outFile.close();
 
-    if (successCount == 0)
+    // closed the file at last only after completion for all threads
+    outFile.close();
+}
+
+void download_file(int clientSocket, const string &group_id, const string &file_sha, const string &destination_path)
+{
+
+    // cout<<"in download_file function"<<endl;
+
+    // push filesha to downloading queue
+    D[file_sha] = {group_id, 0};
+    // Launch a new thread
+    std::thread downloadThread(downloadChunksThread, clientSocket, group_id, file_sha, destination_path); // run thread independantly
+    //  cout<<"below downloadThread"<<endl;
+    // cout <<  << destination_path << endl;
+    downloadThread.detach();
+}
+
+void stopshare(int clientSocket, string &group_id, string &file_sha)
+{
+
+    // Send request to tracker for peer information
+    string request = "stop_share " + group_id + " " + file_sha;
+    send(clientSocket, request.c_str(), request.size(), 0);
+
+    // Receive response from tracker
+
+    char buffer[4096] = {0};
+    recv(clientSocket, buffer, sizeof(buffer), 0);
+    string response(buffer);
+    printMessage("Response from tracker: " + response);
+    // delete this entry from client side
+    if (response == "stopped sharing file")
     {
         clientFileMetadata.erase(file_sha);
-        printMessage("Unable to download file " + file_sha);
     }
+}
 
-    else
+void showdownloads(int clientSocket)
+{
+
+    std::cout << "Show downloads:" << std::endl;
+
+    // Display downloading files
+    for (const auto &entry : D)
     {
-        // send tracker info that u have downloaded this file successfully
+        const std::string &fileSha = entry.first;
+        const std::string &groupId = entry.second.first;
+        const int chunksDownloaded = entry.second.second;
+
+        std::cout << "[D] [" << groupId << "] " << fileSha
+                  << " (Chunks downloaded: " << chunksDownloaded << ")" << std::endl;
     }
 
-    printMessage("File downloaded successfully to " + destination_path);
-    // cout <<  << destination_path << endl;
+    // Display completed files
+    for (const auto &entry : C)
+    {
+        const std::string &fileSha = entry.first;
+        const std::string &groupId = entry.second.first;
+        const int chunksDownloaded = entry.second.second;
+
+        std::cout << "[C] [" << groupId << "] " << fileSha
+                  << " (Chunks downloaded: " << chunksDownloaded << ")" << std::endl;
+    }
 }

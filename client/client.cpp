@@ -62,9 +62,9 @@ void sendChunk(int clientSocket, const int& chunk_no, const string & filesha)
         
         // cout<<"for chunkno "<<chunk_no<<" sending data "<<temp.substr(0,10)<<endl;
         string response = clientFileMetadata[filesha].second[chunk_no] + " " + temp;
-        cout<<"sending data of size"<<response.size()<<endl;
+        // cout<<"sending data of size"<<response.size()<<endl;
 
-        printMessage("Sending chunk " + to_string(chunk_no) );
+        // printMessage("Sending chunk " + to_string(chunk_no) );
         send(clientSocket, response.c_str(), response.size(), 0);
     }
     else
@@ -94,7 +94,7 @@ void listenForChunkRequests(int listenPort)
         recv(clientSocket, buffer, sizeof(buffer), 0);
 
         string request(buffer);
-        cout<<"request recieved="<<request<<endl;
+        // cout<<"request recieved="<<request<<endl;
         if(request.rfind("chunk_info", 0) == 0)
         {
             // printMessage("Request received: " + request.substr(11));
@@ -130,19 +130,19 @@ void listenForChunkRequests(int listenPort)
                 if (i.size() == 0) { count++; continue; }
                 response += to_string(count++) + " ";
             }
-            printMessage("Sending response: " + response);
+            // printMessage("Sending response: " + response);
             send(clientSocket, response.c_str(), response.size(), 0);
         }
         else if (request.rfind("download_chunk", 0) == 0)
         {
-            cout<<"inside doenload "<<endl;
+            // cout<<"inside doenload "<<endl;
             istringstream iss(request);
             string command, filesha, schunk_no;
             iss >> command >> filesha >> schunk_no;
             int chunk_no = stoi(schunk_no);
 
-            printMessage("Command: " + command + ", File SHA: " + filesha + ", Chunk No: " + to_string(chunk_no));
-            printMessage("Sending chunk request: " + to_string(chunk_no));
+            // printMessage("Command: " + command + ", File SHA: " + filesha + ", Chunk No: " + to_string(chunk_no));
+            // printMessage("Sending chunk request: " + to_string(chunk_no));
             sendChunk(clientSocket, chunk_no, filesha);
         }
 
@@ -222,6 +222,8 @@ int main(int argc, char *argv[])
                      "11. List All Sharable Files in Group\n"
                      "12. Upload File to Group\n"
                      "13. Download File from Group\n"
+                     "14. Stop Share\n"
+                     "15. Show downloads\n"
                      "0. Exit\n");
 
         printMessage("Enter your choice: ");
@@ -361,6 +363,24 @@ int main(int argc, char *argv[])
             readInput(destination_path);
             download_file(clientSocket, group_id, file_sha, destination_path);
             break;
+        }
+        case 14:
+        {
+            string groupid, file_sha;
+            printMessage("Enter group ID: ");
+            readInput(groupid);
+            printMessage("Enter file SHA: ");
+            readInput(file_sha);
+            stopshare(clientSocket, groupid, file_sha);
+            break;
+
+        }
+        case 15:
+        {
+            
+            showdownloads(clientSocket);
+            break;
+
         }
         case 0: // Exit
         {

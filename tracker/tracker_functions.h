@@ -7,8 +7,9 @@
 #include <sstream>
 #include <iostream> // For std::cout, std::cerr
 #include <fstream>  // For std::ofstream
-#include<set>
+#include <set>
 #include <sys/stat.h> // For struct stat and mkdir
+#include <unordered_map>
 
 // #include <openssl/evp.h> // For EVP functions
 #include <openssl/sha.h>
@@ -17,14 +18,13 @@
 
 #include <algorithm> // Include for  find
 
-
 struct Group
 {
-    string owner;                                            // Owner of the group
-    vector<string> members;                                  // Members in the group
-    vector<string> pendingRequests;                          // Pending join requests
+    string owner;                   // Owner of the group
+    vector<string> members;         // Members in the group
+    vector<string> pendingRequests; // Pending join requests
     // map<string, pair<string, vector<string>>> sharableFiles; // map of file_name -> SHA1 hash
-    map<string, vector<string>> file_owner;                  // userid to fileShas              // map from owner to file path
+    map<string, vector<string>> file_owner;                     // userid to fileShas              // map from owner to file path
     map<string, pair<string, vector<string>>> fileSha_to_peers; // hash -> {name, vector<peers>}
 };
 
@@ -50,15 +50,9 @@ void handleClient(int clientSocket)
 
         if (b <= 0)
         {
-            cout << "didn't recirebvr anything from client " << endl;
+            cout << "didn't recieve anything from client " << endl;
             users[curr_client].second = false;
-            // Delete file associated with the user
-            // string directory = "client_ip-ports";
-            // string filePath = directory + "/" + curr_client;
-            // if (remove(filePath.c_str()) != 0)
-            // {
-            //     cerr << "Error deleting file for user: " << curr_client << endl;
-            // }
+            
 
             curr_client = "";
             cout << "logging out from user " << curr_client << "\n";
@@ -79,13 +73,7 @@ void handleClient(int clientSocket)
 
             cout << "connection closed from client\n";
             users[curr_client].second = false;
-            // Delete file associated with the user
-            // string directory = "client_ip-ports";
-            // string filePath = directory + "/" + curr_client;
-            // if (remove(filePath.c_str()) != 0)
-            // {
-            //     cerr << "Error deleting file for user: " << curr_client << endl;
-            // }
+            
             curr_client = "";
             cout << "logging out from user " << curr_client << "\n";
             close(clientSocket);
@@ -136,28 +124,7 @@ void handleClient(int clientSocket)
                 users[user_id].second = true;
                 curr_client = user_id;
 
-                
-                // Create directory if it does not exist
-                // string directory = "client_ip-ports";
-                // struct stat st = {0};
-                // if (stat(directory.c_str(), &st) == -1)
-                // {
-                //     mkdir(directory.c_str(), 0700);
-                // }
-
-                // Create file with user_id as name and store IP and port
-                // string filePath = directory + "/" + curr_client;
-                // ofstream outFile(filePath);
-                // if (outFile.is_open())
-                // {
-                //     outFile << client_ip << " " << client_port;
-                //     outFile.close();
-                // }
-                // else
-                // {
-                //     cerr << "Error creating file for user: " << curr_client << endl;
-                // }
-
+               
                 string response = "Login successful.";
                 send(clientSocket, response.c_str(), response.size(), 0);
             }
@@ -248,39 +215,21 @@ void handleClient(int clientSocket)
                         // deleting the info of this client with particular sha
 
                         string peer = curr_client + " " + client_ip + " " + client_port;
-                        vector<string> & peers =  groups[group_id].fileSha_to_peers[sha].second;
+                        vector<string> &peers = groups[group_id].fileSha_to_peers[sha].second;
 
                         auto it = find(peers.begin(), peers.end(), peer);
                         // int peer_index = it - peers.begin();
                         peers.erase(it);
 
                         // deleting the entry of this file if this is only own by current user
-                        if(groups[group_id].fileSha_to_peers[sha].second.size()==0)
+                        if (groups[group_id].fileSha_to_peers[sha].second.size() == 0)
                         {
                             groups[group_id].fileSha_to_peers.erase(sha);
                         }
                     }
-                 
-                 
-                 // deleting current user from file map
-                 groups[group_id].file_owner.erase(curr_client);
 
-
-                 
-
-
-                    // vector<string> filenames = groups[group_id].file_owner[user_id];
-                    // groups[group_id].file_owner.erase(user_id); // delting the this from upload file
-
-                    // // deleting all the files uploaded by current user
-                    // for (auto &name : filenames)
-                    // {
-                    //     if (groups[group_id].sharableFiles.find(name) != groups[group_id].sharableFiles.end())
-                    //     {
-                    //         cout << "deleting file " << name << endl;
-                    //         groups[group_id].sharableFiles.erase(name);
-                    //     }
-                    // }
+                    // deleting current user from file map
+                    groups[group_id].file_owner.erase(curr_client);
 
                     if (members.size() == 1)
                     {
@@ -415,13 +364,7 @@ void handleClient(int clientSocket)
         {
             users[curr_client].second = false;
 
-            // Delete file associated with the user
-            // string directory = "client_ip-ports";
-            // string filePath = directory + "/" + curr_client;
-            // if (remove(filePath.c_str()) != 0)
-            // {
-            //     cerr << "Error deleting file for user: " << curr_client << endl;
-            // }
+           
 
             curr_client = "";
             // cout << " curr client size is " << curr_client.size() << endl;
@@ -443,7 +386,8 @@ void handleClient(int clientSocket)
                     send(clientSocket, response.c_str(), response.size(), 0);
                     continue;
                 }
-                string response = "Sharable files and their hashes:\n";
+                string response = "Sharable files and their hashes name and size:\n";
+                set<pair<string, string>> st;
                 for (const auto &entry : groups[group_id].file_owner)
                 {
                     if (users[entry.first].second == false)
@@ -453,23 +397,25 @@ void handleClient(int clientSocket)
                     // const auto & chunkHashes = entry.second; // Get the pair (file hash, chunk hashes)
 
                     // response +=  ;
-                    set<pair<string,string>> st;
+
                     for (auto &hash : filehashes)
                     {
-                        string filename=groups[group_id].fileSha_to_peers[hash].first;
-                        st.insert({filename,hash}); //used set to remove duplicates
+                        string filename = groups[group_id].fileSha_to_peers[hash].first;
+                        st.insert({hash, filename}); // used map to remove duplicates
                     }
-                   // iterate through set
-                   for(auto & it :st)
-                   {
-                    response+=it.first + " " + it.second +"\n";
-                   }
+                    // iterate through set
 
                     // response += "Chunk Hashes:\n";
                     // for (const auto &chunkHash : chunkHashes)
                     // {
                     //     response += chunkHash + "\n"; // Improved formatting
                     // }
+                }
+
+                for (auto &it : st)
+                {
+                    // cout<<"size of set is"<<st.size()<<endl;
+                    response += it.first + " " + it.second + "\n";
                 }
                 send(clientSocket, response.c_str(), response.size(), 0);
             }
@@ -486,16 +432,16 @@ void handleClient(int clientSocket)
             string group_id;
             string fileName, fileHash;
             vector<string> chunkHashes;
-             string filesize;
+            string filesize;
             // Step 1: Extract group_id, fileName, and fileHash from the message
-            iss >> group_id >> fileName >>filesize>>fileHash;
-            cout << "group_id is " << group_id << " filename is " << fileName << "filesize is"<<filesize<< endl;
+            iss >> group_id >> fileName >> filesize >> fileHash;
+            cout << "group_id is " << group_id << " filename is " << fileName << "filesize is" << filesize << endl;
             // Step 2: Extract chunk hashes (rest of the message)
-           
+
             // Step 3: Check if the group exists
             if (groups.find(group_id) != groups.end())
             {
-                
+
                 if (find(groups[group_id].members.begin(), groups[group_id].members.end(), curr_client) == groups[group_id].members.end())
                 {
                     // Client is not a member of the group
@@ -503,35 +449,34 @@ void handleClient(int clientSocket)
                     send(clientSocket, response.c_str(), response.size(), 0);
                     continue;
                 }
-                // 
-                 string temp = curr_client + " " + client_ip + " " + client_port;
-                 // check if this file is already uploaded
+                //
+                string temp = curr_client + " " + client_ip + " " + client_port;
+                // check if this file is already uploaded
                 if (groups[group_id].fileSha_to_peers.find(fileHash) != groups[group_id].fileSha_to_peers.end())
                 {
-                    
-                    vector<string> & v =groups[group_id].fileSha_to_peers[fileHash].second;
-                    if(find(v.begin(),v.end(),temp)!=v.end())
+
+                    vector<string> &v = groups[group_id].fileSha_to_peers[fileHash].second;
+                    if (find(v.begin(), v.end(), temp) != v.end())
                     {
-                        string response ="u have already uploded or dowmloaded this file";
+                        string response = "u have already uploded or dowmloaded this file";
                         send(clientSocket, response.c_str(), response.size(), 0);
 
                         continue;
-
                     }
-                    string response = "This file  is already uploaded but you can share it now";
+                    // string response = "This file  is  uploaded by u also";
                     groups[group_id].fileSha_to_peers[fileHash].second.push_back(temp);
                     groups[group_id].file_owner[curr_client].push_back(fileHash);
-                    send(clientSocket, response.c_str(), response.size(), 0);
+                    // send(clientSocket, response.c_str(), response.size(), 0);
                     continue;
                 }
 
-                groups[group_id].fileSha_to_peers[fileHash].first=fileName + " " + filesize;
-                groups[group_id].fileSha_to_peers[fileHash].second.push_back(temp) ;
+                groups[group_id].fileSha_to_peers[fileHash].first = fileName + " " + filesize;
+                groups[group_id].fileSha_to_peers[fileHash].second.push_back(temp);
 
                 // groups[group_id].file_owner[curr_client].push_back(fileName);
                 groups[group_id].file_owner[curr_client].push_back(fileHash);
                 // Send success response to client
-                string response = "File metadata stored successfully.";
+                string response = "File uploaded  successfully.";
                 send(clientSocket, response.c_str(), response.size(), 0);
             }
             else
@@ -547,6 +492,15 @@ void handleClient(int clientSocket)
             string group_id, file_sha;
             iss >> group_id >> file_sha;
 
+            // check wheather he is member of grpup
+            if (find(groups[group_id].members.begin(), groups[group_id].members.end(), curr_client) == groups[group_id].members.end())
+            {
+                // Client is not a member of the group
+                string response = "You are not a member of this group.";
+                send(clientSocket, response.c_str(), response.size(), 0);
+                continue;
+            }
+
             // Validate group and file existence
             if (groups.find(group_id) == groups.end() ||
                 groups[group_id].fileSha_to_peers.find(file_sha) == groups[group_id].fileSha_to_peers.end())
@@ -555,22 +509,80 @@ void handleClient(int clientSocket)
                 send(clientSocket, response.c_str(), response.size(), 0);
                 return;
             }
-          istringstream name_size (groups[group_id].fileSha_to_peers[file_sha].first);
-          string name,filesize;
-          name_size>>name>>filesize;
-            // Collect peers sharing the file
-            string response=  filesize + " " ;
-           //  sending reponse as  ip an ]d port of each peer having content of this file 
-            for (const string & temp : groups[group_id].fileSha_to_peers[file_sha].second)
-            {
-                 istringstream s (temp);
-                 string tu,ti,tp;
-                 s>>tu>>ti>>tp;
 
-                 response += ti + " " + tp + " \n"; // storing only ip and port not userid
+            // check whearher has he already uploaded or downloaded this file
+
+            // if(groups[])
+            istringstream name_size(groups[group_id].fileSha_to_peers[file_sha].first);
+            string name, filesize;
+            name_size >> name >> filesize;
+            // Collect peers sharing the file
+            string response = filesize + " ";
+            //  sending reponse as  ip an ]d port of each peer having content of this file
+            for (const string &temp : groups[group_id].fileSha_to_peers[file_sha].second)
+            {
+                istringstream s(temp);
+                string tu, ti, tp;
+                s >> tu >> ti >> tp;
+
+                response += ti + " " + tp + " \n"; // storing only ip and port not userid
             }
-            cout<<"response is  \n"<<response<<endl;
+            // cout<<"response is  \n"<<response<<endl;
             // Send peer information to client
+            send(clientSocket, response.c_str(), response.size(), 0);
+        }
+
+        else if (command == "stop_share")
+        {
+            string group_id, file_sha;
+            iss >> group_id >> file_sha;
+
+            // check wheather he is member of grpup
+            if (find(groups[group_id].members.begin(), groups[group_id].members.end(), curr_client) == groups[group_id].members.end())
+            {
+                // Client is not a member of the group
+                string response = "You are not a member of this group.";
+                send(clientSocket, response.c_str(), response.size(), 0);
+                continue;
+            }
+
+            // Validate group and file existence
+            if (groups.find(group_id) == groups.end() ||
+                groups[group_id].fileSha_to_peers.find(file_sha) == groups[group_id].fileSha_to_peers.end())
+            {
+                string response = "File not found";
+                send(clientSocket, response.c_str(), response.size(), 0);
+                continue;
+            }
+
+            // checking if current client can share this file or not
+            vector<string> &temp = groups[group_id].file_owner[curr_client];
+            auto it = find(temp.begin(), temp.end(), file_sha);
+            if (it == temp.end())
+            {
+                string response = "u dont have this file";
+                send(clientSocket, response.c_str(), response.size(), 0);
+                continue;
+            }
+
+            // delete this file sha if this is only own by current user
+            vector<string> &temp2 = groups[group_id].fileSha_to_peers[file_sha].second;
+
+            if (temp2.size() == 1)
+            {
+                cout << "size is 1" << endl;
+                string temp3 = temp2[0];
+                size_t spacePos = temp3.find(curr_client);
+
+                if (spacePos != string::npos)
+                {
+                    cout << "erasing file sha" << endl;
+                    groups[group_id].fileSha_to_peers.erase(file_sha);
+                }
+            }
+
+            temp.erase(it);
+            string response = "stopped sharing file";
             send(clientSocket, response.c_str(), response.size(), 0);
         }
     }
