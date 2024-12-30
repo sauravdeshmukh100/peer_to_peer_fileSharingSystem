@@ -194,7 +194,7 @@ int main(int argc, char *argv[])
     }
 
     // Step 3: Connect to the first tracker
-    int clientSocket = connectToTracker(trackers[0].ip, trackers[0].port);
+    int clientSocket = connectToTracker(trackers[1].ip, trackers[1].port);
     if (clientSocket < 0)
     {
         printMessage("Cannot connect to tracker");
@@ -278,7 +278,14 @@ int main(int argc, char *argv[])
         {
             std::string group_id;
             printMessage("Enter group ID: ");
-            readInput(group_id);
+            readInput(command);
+            std::istringstream iss(command);
+            iss>> group_id;
+            if(group_id.empty())
+            {
+                cout<<"please enter group_id"<<endl;
+                break;
+            }
             createGroup(clientSocket, group_id);
             break;
         }
