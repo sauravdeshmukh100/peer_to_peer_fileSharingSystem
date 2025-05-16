@@ -153,9 +153,53 @@ void listenForChunkRequests(int listenPort)
     }
 }
 
+// Function to handle commands that need to be sent to the tracker
+// This function will automatically retry with another tracker if the current one fails
+bool sendCommandToTracker(const string &command, char *responseBuffer, size_t bufferSize) {
+    std::lock_guard<std::mutex> lock(trackerMutex);
+    
+    // Try to send the command to the current tracker
+    int result = send(activeTrackerSocket, command.c_str(), command.length(), MSG_NOSIGNAL);
+    
+    // If send failed, try to switch to another tracker
+    if (result == -1) {
+        printMessage("Failed to send command to tracker. Trying another tracker...");
+        
+        // Try to switch to another tracker
+        int newSocket = switchToTracker(activeTrackers, currentTrackerIndex);
+        if (newSocket < 0) {
+            printMessage("Could not connect to any tracker. Command failed.");
+            return false;
+        }
+        
+        // Update the active socket
+        activeTrackerSocket = newSocket;
+        
+        // Try to send the command again
+        result = send(activeTrackerSocket, command.c_str(), command.length(), 0);
+        if (result == -1) {
+            printMessage("Failed to send command to new tracker. Command failed.");
+            return false;
+        }
+    }
+    
+    // Receive the response
+    int bytesReceived = recv(activeTrackerSocket, responseBuffer, bufferSize - 1, 0);
+    if (bytesReceived <= 0) {
+        printMessage("Failed to receive response from tracker.");
+        return false;
+    }
+    
+    // Null-terminate the response buffer
+    responseBuffer[bytesReceived] = '\0';
+    return true;
+}
+
+
+
 int main(int argc, char *argv[])
 {
-    if (argc != 3)
+   if (argc != 3)
     {
         printMessage("Usage: ./client <IP>:<PORT> tracker_info.txt");
         return 1;
@@ -185,28 +229,41 @@ int main(int argc, char *argv[])
     std::string trackerInfoFile = argv[2];
 
     // Step 2: Read the tracker info
-    std::vector<TrackerInfo> trackers = readTrackerInfo(trackerInfoFile);
-    if (trackers.empty())
+    activeTrackers = readTrackerInfo(trackerInfoFile);
+    if (activeTrackers.empty())
     {
         printMessage("No trackers found in tracker_info.txt");
         return 1;
     }
 
     // Step 3: Try connecting to the 0th tracker first, then fallback to the 1st tracker
-    int clientSocket = connectToTracker(trackers[0].ip, trackers[0].port);
-    if (clientSocket < 0)
+    activeTrackerSocket = connectToTracker(activeTrackers[0].ip, activeTrackers[0].port);
+    if (activeTrackerSocket < 0)
     {
         printMessage("0th tracker unavailable, trying 1st tracker...");
-        clientSocket = connectToTracker(trackers[1].ip, trackers[1].port);
-        if (clientSocket < 0)
+        activeTrackerSocket = connectToTracker(activeTrackers[1].ip, activeTrackers[1].port);
+        if (activeTrackerSocket < 0)
         {
             printMessage("Cannot connect to any tracker");
             return 1;
         }
-        cout<<"connected to tracker "<<trackers[1].ip<<endl;
+        currentTrackerIndex = 1;
+        cout<<"connected to tracker "<<activeTrackers[1].ip<<endl;
+    }
+    else {
+        currentTrackerIndex = 0;
+        cout<<"connected to tracker "<<activeTrackers[0].ip<<endl;
     }
 
-    cout<<"connected to tracker "<<trackers[0].ip<<endl;
+
+    // Start the tracker monitoring thread
+    std::thread monitorThread = startTrackerMonitoring(activeTrackers, [](int newSocket) {
+        // This callback is called when the tracker monitoring thread detects
+        // that the active tracker is down and has found a new tracker
+        activeTrackerSocket = newSocket;
+    });
+
+    monitorThread.detach();
 
     std::thread listener(listenForChunkRequests, port);
     listener.detach();
@@ -261,7 +318,7 @@ int main(int argc, char *argv[])
                 printMessage("Invalid input. Please provide both user ID and password.");
                 break;
             }
-            createUserAccount(clientSocket, user_id, passwd);
+            createUserAccount( activeTrackerSocket, user_id, passwd);
             break;
         }
 
@@ -272,13 +329,15 @@ int main(int argc, char *argv[])
             readInput(command);
             std::istringstream iss(command);
             iss >> user_id >> passwd;
+            my_user_id=user_id;
+            
             if (user_id.empty() || passwd.empty())
             {
                 printMessage("Invalid input. Please provide both user ID and password.");
                 break;
             }
             std::string temp_port = std::to_string(port);
-            loginUser(clientSocket, user_id, passwd, ip, temp_port);
+            loginUser( activeTrackerSocket, user_id, passwd, ip, temp_port);
             break;
         }
         case 3: // Create Group
@@ -293,7 +352,7 @@ int main(int argc, char *argv[])
                 cout << "please enter group_id" << endl;
                 break;
             }
-            createGroup(clientSocket, group_id);
+            createGroup( activeTrackerSocket, group_id);
             break;
         }
         case 4: // Join Group
@@ -301,7 +360,7 @@ int main(int argc, char *argv[])
             std::string group_id;
             printMessage("Enter group ID: ");
             readInput(group_id);
-            joinGroup(clientSocket, group_id);
+            joinGroup( activeTrackerSocket, group_id);
             break;
         }
         case 5: // Leave Group
@@ -309,7 +368,7 @@ int main(int argc, char *argv[])
             std::string group_id;
             printMessage("Enter group ID: ");
             readInput(group_id);
-            leaveGroup(clientSocket, group_id);
+            leaveGroup( activeTrackerSocket, group_id);
             break;
         }
         case 6: // List Pending Join Requests
@@ -317,7 +376,7 @@ int main(int argc, char *argv[])
             std::string group_id;
             printMessage("Enter group ID: ");
             readInput(group_id);
-            listPendingJoinRequests(clientSocket, group_id);
+            listPendingJoinRequests( activeTrackerSocket, group_id);
             break;
         }
         case 7: // Accept Join Request
@@ -327,12 +386,12 @@ int main(int argc, char *argv[])
             readInput(command);
             std::istringstream iss(command);
             iss >> group_id >> user_id;
-            acceptJoinRequest(clientSocket, group_id, user_id);
+            acceptJoinRequest( activeTrackerSocket, group_id, user_id);
             break;
         }
         case 8: // List All Groups
         {
-            listAllGroups(clientSocket);
+            listAllGroups( activeTrackerSocket);
             break;
         }
         case 9: // List All Members of a Group
@@ -340,12 +399,13 @@ int main(int argc, char *argv[])
             std::string group_id;
             printMessage("Enter group ID: ");
             readInput(group_id);
-            listGroupMembers(clientSocket, group_id);
+            listGroupMembers( activeTrackerSocket, group_id);
             break;
         }
         case 10: // Logout
         {
-            logout(clientSocket);
+            my_user_id="NULL";
+            logout( activeTrackerSocket);
             break;
         }
         case 11: // List All Sharable Files in Group
@@ -353,7 +413,7 @@ int main(int argc, char *argv[])
             std::string group_id;
             printMessage("Enter group ID: ");
             readInput(group_id);
-            listFiles(clientSocket, group_id);
+            listFiles( activeTrackerSocket, group_id);
             break;
         }
         case 12: // Upload File to Group
@@ -363,7 +423,7 @@ int main(int argc, char *argv[])
             readInput(file_path);
             printMessage("Enter group ID: ");
             readInput(group_id);
-            uploadFile(clientSocket, file_path, group_id);
+            uploadFile( activeTrackerSocket, file_path, group_id);
             break;
         }
         case 13: // Download File from Group
@@ -375,7 +435,7 @@ int main(int argc, char *argv[])
             readInput(file_sha);
             printMessage("Enter destination path: ");
             readInput(destination_path);
-            download_file(clientSocket, group_id, file_sha, destination_path);
+            download_file( activeTrackerSocket, group_id, file_sha, destination_path);
             break;
         }
         case 14:
@@ -385,19 +445,20 @@ int main(int argc, char *argv[])
             readInput(groupid);
             printMessage("Enter file SHA: ");
             readInput(file_sha);
-            stopshare(clientSocket, groupid, file_sha);
+            stopshare( activeTrackerSocket, groupid, file_sha);
             break;
         }
         case 15:
         {
 
-            showdownloads(clientSocket);
+            showdownloads( activeTrackerSocket);
             break;
         }
         case 0: // Exit
         {
+            my_user_id="NULL";
             std::string request = "exit";
-            send(clientSocket, request.c_str(), request.size(), 0);
+            send( activeTrackerSocket, request.c_str(), request.size(), 0);
             printMessage("Exiting...");
             return 0;
         }

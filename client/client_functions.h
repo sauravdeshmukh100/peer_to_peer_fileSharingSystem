@@ -102,11 +102,102 @@ private:
 void createAndStoreFileMetadata(const string &curr_client, pair<string, pair<string, vector<string>>> &entry);
 
 void loadFileMetadata(const string &curr_client);
+int connectToTracker(const string &ip, int port);   
 // stroing the file hash -> <file_path, vector<chunk_hashes>>
 
 map<string, pair<string, vector<string>>> clientFileMetadata;
 // map<string, string> chunkStorage;
 string curr_client;
+
+// Declare global variables
+std::vector<TrackerInfo> activeTrackers;
+ int currentTrackerIndex;
+ std::mutex trackerMutex;
+ int activeTrackerSocket;
+
+// Function to check if the current tracker is alive
+bool isTrackerAlive(int socket)
+{
+    // Try to send a small ping message to the tracker
+    const char *ping = "ping";
+
+    // If send returns error, tracker is down
+    int result = send(socket, ping, strlen(ping), MSG_NOSIGNAL);
+    return result != -1;
+}
+string my_user_id="NULL";
+
+// Function to switch to another tracker
+int switchToTracker(const std::vector<TrackerInfo> &trackers, int currentIndex)
+{
+    std::lock_guard<std::mutex> lock(trackerMutex);
+
+    // Try each tracker in the list
+    for (size_t i = 0; i < trackers.size(); i++)
+    {
+        // Skip the current tracker
+        if (i == static_cast<size_t>(currentIndex))
+            continue;
+
+        // Try to connect to the next tracker
+        int newSocket = connectToTracker(trackers[i].ip, trackers[i].port);
+        if (newSocket >= 0)
+        {
+            std::cout << "Switched to tracker at " << trackers[i].ip << ":" << trackers[i].port << std::endl;
+
+            // Update the current tracker index
+            currentTrackerIndex = i;
+            activeTrackerSocket = newSocket;
+            string request = "tracker_switched " + my_user_id ;
+            send(activeTrackerSocket, request.c_str(), request.size(), 0);
+
+            return newSocket;
+        }
+    }
+
+    // If we get here, all trackers are down
+    std::cout << "Warning: All trackers are unavailable." << std::endl;
+    return -1;
+}
+
+// Function that runs in a separate thread to monitor tracker health
+void monitorTrackerHealth(const std::vector<TrackerInfo> &trackers, std::function<void(int)> setSocketCallback)
+{
+    while (true)
+    {
+        // Sleep for a while between checks
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+
+        // Get the current socket
+        int currentSocket;
+        {
+            std::lock_guard<std::mutex> lock(trackerMutex);
+            currentSocket = activeTrackerSocket;
+        }
+
+        // Check if the current tracker is alive
+        if (currentSocket >= 0 && !isTrackerAlive(currentSocket))
+        {
+            std::cout << "Tracker connection lost. Attempting to switch to another tracker..." << std::endl;
+
+            // Try to switch to another tracker
+            int newSocket = switchToTracker(trackers, currentTrackerIndex);
+
+            if (newSocket >= 0)
+            {
+                // Update the socket in the main application
+                setSocketCallback(newSocket);
+            }
+        }
+    }
+}
+
+// Function to start the tracker health monitoring thread
+std::thread startTrackerMonitoring(const std::vector<TrackerInfo> &trackers, std::function<void(int)> setSocketCallback)
+{
+    return std::thread(monitorTrackerHealth, trackers, setSocketCallback);
+}
+
 int connectToTracker(const string &ip, int port)
 {
     int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -824,7 +915,7 @@ bool downloadChunk(int clientSocket, const int &chunk_no, const string &peer_inf
                 if (D[filesha].second + 1 == total_chunks)
                 {
                     C[filesha].second = D[filesha].second + 1;
-                     C[filesha].first = D[filesha].first;
+                    C[filesha].first = D[filesha].first;
                     D.erase(filesha);
                 }
                 else
@@ -977,8 +1068,8 @@ void downloadChunksThread(int clientSocket, const string &group_id, const string
         return;
     }
 
-      pair<string, pair<string, vector<string>>> entry={file_sha, {destination_path, clientFileMetadata[file_sha].second}};
-    createAndStoreFileMetadata(curr_client,entry  );
+    pair<string, pair<string, vector<string>>> entry = {file_sha, {destination_path, clientFileMetadata[file_sha].second}};
+    createAndStoreFileMetadata(curr_client, entry);
 
     // closed the file at last only after completion for all threads
     outFile.close();

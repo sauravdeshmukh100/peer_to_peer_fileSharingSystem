@@ -358,8 +358,25 @@ void handleClient(int clientSocket, string trackerName, int trackerNo)
         iss >> command;
         cout << trackerName << " received command: " << command << endl;
 
+        if(command == "ping")
+        {
+            continue;
+        }
+        // automatic login when traccker switched.
+        else if (command == "tracker_switched")
+        {
+            string user_id;
+            iss>>user_id;
+            if(user_id=="NULL")
+            continue;
+
+            currClient=user_id;
+
+            
+
+        }
         // Handle client exit
-        if (command == "exit")
+        else if (command == "exit")
         {
             cout << "Connection closed from client" << endl;
             users[currClient].second = false;
