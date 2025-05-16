@@ -47,6 +47,9 @@ To run the client:
 
 ```bash
 ./client <IP>:<PORT> tracker_info.txt
+for eg : 
+./client 127.0.0.1:1000 tracker_info.txt
+
 ```
 
 Where:

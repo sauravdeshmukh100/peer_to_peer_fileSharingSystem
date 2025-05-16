@@ -819,6 +819,7 @@ bool downloadChunk(int clientSocket, const int &chunk_no, const string &peer_inf
                     send(clientSocket, request.c_str(), request.size(), 0);
 
                     printMessage("File downloaded successfully to " + destination_path);
+                    // createAndStoreFileMetadata
                 }
                 if (D[filesha].second + 1 == total_chunks)
                 {
@@ -975,6 +976,9 @@ void downloadChunksThread(int clientSocket, const string &group_id, const string
         printMessage("Error: Unable to open file for writing.");
         return;
     }
+
+      pair<string, pair<string, vector<string>>> entry={file_sha, {destination_path, clientFileMetadata[file_sha].second}};
+    createAndStoreFileMetadata(curr_client,entry  );
 
     // closed the file at last only after completion for all threads
     outFile.close();

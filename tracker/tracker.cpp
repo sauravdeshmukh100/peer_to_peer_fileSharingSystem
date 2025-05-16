@@ -14,215 +14,178 @@
 #include <sstream>
 #include <cstdlib>
 #include "tracker_functions.h"
-#include "read_tracker.h"
+// #include "read_tracker.h"
+
+using namespace std;
 
 // Maps to store users and groups
 map<string, pair<string, bool>> users; // user_id -> hashed password
 map<string, Group> groups;             // group_id -> Group
 
-vector<std::pair<std::string, int>> trackers;
-
-void masterTracker(int port, const std::string &logFile, const std::string &subTrackerIP, int subTrackerPort)
+struct TrackerInfo
 {
-    int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in serverAddr = {0};
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    string ip;
+    int client_port;
+    int sync_port;
+};
 
-    if (bind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
-    {
-        std::cerr << "Error binding to port" << std::endl;
-        return;
-    }
+vector<TrackerInfo> trackers;
 
-    if (listen(serverSocket, 5) < 0)
-    {
-        std::cerr << "Error listening on socket" << std::endl;
-        return;
-    }
 
-    std::cout << "Master tracker running on port " << port << std::endl;
 
-    int connectionCount = 0;
+// string logFile;      // Global log file name
 
-    while (true)
-    {
-        int clientSocket = accept(serverSocket, nullptr, nullptr);
-
-        // Load balancing: Alternate between master and sub-tracker
-        // if (connectionCount % 2 == 1)
-        // {
-        //     // Forward to sub-tracker
-        //     int subSocket = socket(AF_INET, SOCK_STREAM, 0);
-        //     sockaddr_in subAddr = {0};
-        //     subAddr.sin_family = AF_INET;
-        //     subAddr.sin_port = htons(subTrackerPort);
-        //     inet_pton(AF_INET, subTrackerIP.c_str(), &subAddr.sin_addr);
-
-        //     if (connect(subSocket, (struct sockaddr *)&subAddr, sizeof(subAddr)) == 0)
-        //     {
-        //         sendLogFile(subSocket, logFile); // Synchronize log
-        //         close(subSocket);
-        //         writeToLog(logFile, "Client redirected to sub-tracker");
-        //     }
-        // }
-        // else
-        // {
-
-        if (clientSocket < 0)
-        {
-            std::cerr << "Error accepting connection" << std::endl;
-            continue;
-        }
-
-        cout << "clientsocket is " << clientSocket << endl;
-
-        std::thread th1(handleClient, clientSocket, "master");
-        th1.detach(); // Detach the thread to run independently
-        // }
-
-        // connectionCount++;
-    }
-
-    close(serverSocket);
+void processLogEntry(const string &msg)
+{
+    // Placeholder: Update tracker state based on log entry
+    cout << "Processing sync message: " << msg << endl;
 }
 
-int connectTomasterTracker(const string &ip, int port)
-{
-    int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
 
-    if (clientSocket < 0)
-    {
-        cout << "Error creating client socket" << endl;
-        ;
-        return -1;
+
+std::vector<std::string> split(const std::string& str, char delimiter) {
+    std::vector<std::string> tokens;
+    std::string token;
+    std::stringstream tokenStream(str);
+    while (std::getline(tokenStream, token, delimiter)) {
+        tokens.push_back(token);
     }
-
-    sockaddr_in serverAddress;
-    serverAddress.sin_family = AF_INET;
-    serverAddress.sin_port = htons(port);
-    inet_pton(AF_INET, ip.c_str(), &serverAddress.sin_addr);
-
-    // Connect to master tracker
-    if (connect(clientSocket, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) < 0)
-    {
-        cout << "Error connecting to tracker having ip " + ip + " and port " + to_string(port) << endl;
-        return -1;
-    }
-
-    return clientSocket;
+    return tokens;
 }
 
-void subTracker(int port, const std::string &logFile)
+void runTracker(int clientPort, int syncPort, const string &logFile, int trackerNo, string otherIp, int otherSyncPort)
 {
-    int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in serverAddr = {0};
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    // // Initialize state from log
+    // readLog(logFile); don't need to intialise the state i will ask to other tracker rather 
+    // cout << "Tracker " << trackerNo << " state initialized from " << logFile << endl;
 
-    bind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
-    listen(serverSocket, 5);
+    // Client server socket setup
+    int clientServerSocket = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in clientAddr = {0};
+    clientAddr.sin_family = AF_INET;
+    clientAddr.sin_port = htons(clientPort);
+    clientAddr.sin_addr.s_addr = INADDR_ANY;
+    bind(clientServerSocket, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
+    listen(clientServerSocket, 5);
+    cout << "Tracker " << trackerNo << " listening on client port " << clientPort << endl;
 
-    std::cout << "Sub-tracker running on port " << port << std::endl;
+     bool syncComplete = false;  // This flag will indicate if tracker-to-tracker sync is successful
 
-    while (true)
-    {
+     // Start a thread to handle tracker-to-tracker sync connections
+     thread trackerSyncThread([=, &logFile, &syncComplete]() {
+        while (true) {
+            if (trackerNo == 0) {
+                // Master Tracker: Listen for incoming sync connections from other trackers
+                int trackerServerSocket = socket(AF_INET, SOCK_STREAM, 0);
+                sockaddr_in syncAddr = {};
+                syncAddr.sin_family = AF_INET;
+                syncAddr.sin_addr.s_addr = INADDR_ANY;
+                syncAddr.sin_port = htons(syncPort);
+                bind(trackerServerSocket, (sockaddr*)&syncAddr, sizeof(syncAddr));
+                listen(trackerServerSocket, 5);
+                cout << "Sync listener (thread) waiting on port " << syncPort << " for other trackers\n";
 
-        // build connection with master tracker
+                while (true) {
+                    syncSocket = accept(trackerServerSocket, nullptr, nullptr);
+                    if (syncSocket >= 0) {
+                        cout << "Sync connection accepted from another tracker.\n";
+                        syncComplete = true;  // Mark sync as complete
+                        handleTrackerSync(syncSocket, logFile,false);
+                        syncSocket = -1;  // Reset sync socket
+                        // syncComplete = true;  // Mark sync as complete
+                        cout<<"marked synccomplete as "<<syncComplete<<endl;
+                    } else {
+                        cout << "Sync connection failed. Retrying...\n";
+                        this_thread::sleep_for(chrono::seconds(5));  // Retry after 5 seconds
+                    }
+                }
+                close(trackerServerSocket);
+            } else {
+                // Sub Tracker: Try to connect to the master tracker
+                while (true) {
+                    int syncSocket = socket(AF_INET, SOCK_STREAM, 0);
+                    sockaddr_in masterAddr = {};
+                    masterAddr.sin_family = AF_INET;
+                    masterAddr.sin_port = htons(otherSyncPort);
+                    inet_pton(AF_INET, otherIp.c_str(), &masterAddr.sin_addr);
 
-        // if connection successfull then mastersocket will be +ve number else -1
-
-        if (mastersocket < 0)
-        {
-            mastersocket = connectTomasterTracker(trackers[0].first, trackers[0].second);
-            if (mastersocket < 0)
-            {
-                cout << "can't connect to master" << endl;
-            }
-
-            else
-            {
-                cout<<"connected to master"<<endl;
-                std::thread th2(handlemaster, std::ref(mastersocket));
-                th2.detach(); // Detach the thread to run independently
+                    if (connect(syncSocket, (sockaddr*)&masterAddr, sizeof(masterAddr)) >= 0) {
+                        cout << "Connected to master tracker for sync.\n";
+                        syncComplete = true;  // Mark sync as complete
+                        handleTrackerSync(syncSocket, logFile,false);
+                        
+                        break;  // Exit the loop once sync is complete
+                    } else {
+                        close(syncSocket);
+                        cout << "Failed to connect to master tracker. Retrying...\n";
+                        this_thread::sleep_for(chrono::seconds(5));  // Retry after 5 seconds
+                    }
+                }
             }
         }
+    });
 
-        // else  create new thread to recieve data from master
+    trackerSyncThread.detach();  // Detach sync thread to keep it running indefinitely
 
-        int clientSocket = accept(serverSocket, nullptr, nullptr);
-
-        if (clientSocket < 0)
-        {
-            std::cerr << "Error accepting connection" << std::endl;
-            continue;
-        }
-
-        cout << "clientsocket is " << clientSocket << endl;
-
-        std::thread th1(handleClient, clientSocket, "subtracker");
-        th1.detach(); // Detach the thread to run independently
+    // Main loop for accepting client connections after sync is complete
+    while (!syncComplete) {
+        cout << "Waiting for sync to complete before accepting clients...\n";
+        this_thread::sleep_for(chrono::seconds(1));  // Wait until sync is complete
     }
-    close(serverSocket);
-    // close(mastersocket);
+   cout<<"going sleep for 5 sec"<<endl;
+    sleep(5);
+    // Accept client connections
+    while (true)
+    {
+        int clientSocket = accept(clientServerSocket, nullptr, nullptr);
+        if (clientSocket >= 0)
+        {
+            thread(handleClient, clientSocket, "Tracker " + to_string(trackerNo),trackerNo).detach();
+        }
+    }
+    close(clientServerSocket);
 }
-
 int main(int argc, char *argv[])
 {
     if (argc < 3)
     {
-        std::cerr << "Usage: ./tracker <tracker_info.txt> <tracker_no>" << std::endl;
+        cerr << "Usage: ./tracker <tracker_info.txt> <tracker_no>" << endl;
         return -1;
     }
 
-    std::string trackerInfoFile = argv[1];
-    int trackerNo = std::stoi(argv[2]);
-
-    // Read tracker info from file
-    std::ifstream trackerInfo(trackerInfoFile);
+    string trackerInfoFile = argv[1];
+    int trackerNo = stoi(argv[2]);
+    currentTrackerId=trackerNo;
+    ifstream trackerInfo(trackerInfoFile);
     if (!trackerInfo.is_open())
     {
-        std::cerr << "Error: Unable to open tracker info file." << std::endl;
+        cerr << "Error opening tracker info file" << endl;
         return -1;
     }
 
     string ip;
-    int port;
-
-    while (trackerInfo >> ip >> port)
+    int client_port, sync_port;
+    while (trackerInfo >> ip >> client_port >> sync_port)
     {
-        trackers.emplace_back(ip, port);
+        trackers.push_back({ip, client_port, sync_port});
     }
     trackerInfo.close();
 
     if (trackerNo < 0 || trackerNo >= trackers.size())
     {
-        std::cerr << "Invalid tracker number." << std::endl;
+        cerr << "Invalid tracker number" << endl;
         return -1;
     }
 
-    // Determine role based on tracker number
-    logFile = "log" + std::to_string(trackerNo) + ".txt";
+    ::logFile = "log" + to_string(trackerNo) + ".txt";
+    std::ofstream ofs(::logFile, std::ofstream::out | std::ofstream::trunc); // Clear the log file
+    ofs.close();
+    int clientPort = trackers[trackerNo].client_port;
+    int syncPort = trackers[trackerNo].sync_port;
+    int otherTrackerNo = (trackerNo == 0) ? 1 : 0;
+    string otherIp = trackers[otherTrackerNo].ip;
+    int otherSyncPort = trackers[otherTrackerNo].sync_port;
 
-    if (trackerNo == 0)
-    {
-        // Master tracker
-        if (trackers.size() < 2)
-        {
-            std::cerr << "Insufficient tracker information for sub-tracker." << std::endl;
-            return -1;
-        }
-        std::string subTrackerIP = trackers[1].first;
-        int subTrackerPort = trackers[1].second;
-        masterTracker(trackers[0].second, logFile, subTrackerIP, subTrackerPort);
-    }
-    else
-    {
-        // Sub-tracker
-        subTracker(trackers[trackerNo].second, logFile);
-    }
-
+    runTracker(clientPort, syncPort, logFile, trackerNo, otherIp, otherSyncPort);
     return 0;
 }

@@ -8,12 +8,11 @@
 #include "client_functions.h"
 using namespace std;
 
-
 // Mock storage for chunks
 // map<string, string> chunkStorage; // chunk_sha -> file path
 // const size_t CHUNK_SIZE = 2;
 
-void sendChunk(int clientSocket, const int& chunk_no, const string & filesha)
+void sendChunk(int clientSocket, const int &chunk_no, const string &filesha)
 {
     // Check if the file sha exists
     if (clientFileMetadata.find(filesha) == clientFileMetadata.end())
@@ -58,8 +57,8 @@ void sendChunk(int clientSocket, const int& chunk_no, const string & filesha)
     // Send the chunk data to the client
     if (bytesRead > 0)
     {
-        string temp (buffer, bytesRead);
-        
+        string temp(buffer, bytesRead);
+
         // cout<<"for chunkno "<<chunk_no<<" sending data "<<temp.substr(0,10)<<endl;
         string response = clientFileMetadata[filesha].second[chunk_no] + " " + temp;
         // cout<<"sending data of size"<<response.size()<<endl;
@@ -83,7 +82,7 @@ void listenForChunkRequests(int listenPort)
     serverAddr.sin_addr.s_addr = INADDR_ANY;
     serverAddr.sin_port = htons(listenPort);
 
-    bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
+    bind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
     listen(serverSocket, 5);
 
     while (true)
@@ -95,7 +94,7 @@ void listenForChunkRequests(int listenPort)
 
         string request(buffer);
         // cout<<"request recieved="<<request<<endl;
-        if(request.rfind("chunk_info", 0) == 0)
+        if (request.rfind("chunk_info", 0) == 0)
         {
             // printMessage("Request received: " + request.substr(11));
 
@@ -104,7 +103,7 @@ void listenForChunkRequests(int listenPort)
 
             string response;
 
-            if(clientFileMetadata.find(request.substr(11)) == clientFileMetadata.end())
+            if (clientFileMetadata.find(request.substr(11)) == clientFileMetadata.end())
             {
                 printMessage("Entry not found for given hash");
                 response = "entry not found for this file";
@@ -112,10 +111,10 @@ void listenForChunkRequests(int listenPort)
                 close(clientSocket);
                 continue;
             }
-            
+
             vector<string> chunk_hashes = clientFileMetadata[request.substr(11)].second;
-              
-            if(chunk_hashes.size() == 0)
+
+            if (chunk_hashes.size() == 0)
             {
                 printMessage("No chunks found for the given entry");
                 response = "no chunk found for this entry";
@@ -123,11 +122,15 @@ void listenForChunkRequests(int listenPort)
                 close(clientSocket);
                 continue;
             }
-            
+
             int count = 0;
-            for (auto & i : chunk_hashes)
+            for (auto &i : chunk_hashes)
             {
-                if (i.size() == 0) { count++; continue; }
+                if (i.size() == 0)
+                {
+                    count++;
+                    continue;
+                }
                 response += to_string(count++) + " ";
             }
             // printMessage("Sending response: " + response);
@@ -149,10 +152,6 @@ void listenForChunkRequests(int listenPort)
         close(clientSocket);
     }
 }
-
-
-
-
 
 int main(int argc, char *argv[])
 {
@@ -193,13 +192,21 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Step 3: Connect to the first tracker
-    int clientSocket = connectToTracker(trackers[1].ip, trackers[1].port);
+    // Step 3: Try connecting to the 0th tracker first, then fallback to the 1st tracker
+    int clientSocket = connectToTracker(trackers[0].ip, trackers[0].port);
     if (clientSocket < 0)
     {
-        printMessage("Cannot connect to tracker");
-        return 1;
+        printMessage("0th tracker unavailable, trying 1st tracker...");
+        clientSocket = connectToTracker(trackers[1].ip, trackers[1].port);
+        if (clientSocket < 0)
+        {
+            printMessage("Cannot connect to any tracker");
+            return 1;
+        }
+        cout<<"connected to tracker "<<trackers[1].ip<<endl;
     }
+
+    cout<<"connected to tracker "<<trackers[0].ip<<endl;
 
     std::thread listener(listenForChunkRequests, port);
     listener.detach();
@@ -280,10 +287,10 @@ int main(int argc, char *argv[])
             printMessage("Enter group ID: ");
             readInput(command);
             std::istringstream iss(command);
-            iss>> group_id;
-            if(group_id.empty())
+            iss >> group_id;
+            if (group_id.empty())
             {
-                cout<<"please enter group_id"<<endl;
+                cout << "please enter group_id" << endl;
                 break;
             }
             createGroup(clientSocket, group_id);
@@ -380,14 +387,12 @@ int main(int argc, char *argv[])
             readInput(file_sha);
             stopshare(clientSocket, groupid, file_sha);
             break;
-
         }
         case 15:
         {
-            
+
             showdownloads(clientSocket);
             break;
-
         }
         case 0: // Exit
         {
@@ -401,6 +406,3 @@ int main(int argc, char *argv[])
         }
     }
 }
-
-
-
